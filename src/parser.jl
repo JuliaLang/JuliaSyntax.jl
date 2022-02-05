@@ -2725,6 +2725,12 @@ function parse_cat(ps::ParseState, closer, end_is_symbol)
     if k == closer
         # []  ==>  (vect)
         return parse_vect(ps, closer)
+    elseif k == K";"
+        # [;;]      ==>  (ncat 2)
+        # [;; \n ]  ==>  (ncat 2)
+        n_semis, _ = parse_array_separator(ps)
+        bump_closing_token(ps, closer)
+        return (K"ncat", set_numeric_flags(n_semis))
     end
     mark = position(ps)
     parse_eq_star(ps)
