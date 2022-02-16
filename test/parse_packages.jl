@@ -21,7 +21,7 @@ end
 
 end
 
-if VERSION < v"1.8" || haskey(ENV, "PARSE_STDLIB")
+if VERSION < v"1.8-DEV" || haskey(ENV, "PARSE_STDLIB")
 # TODO: Fix on 1.8
 
 @testset "Parse Julia stdlib at $(Sys.STDLIB)" begin
