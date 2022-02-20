@@ -1,5 +1,5 @@
 # Adaptor for the API/ABI expected by the Julia runtime code.
-function core_parser_hook(code, filename, offset, options)
+function core_parser_hook(code, filename, lineno, offset, options)
     try
         # TODO: Check that we do all this input wrangling without copying the
         # code buffer
@@ -46,6 +46,13 @@ function core_parser_hook(code, filename, offset, options)
                code=code)
     end
     return Core.Compiler.fl_parse(code, filename, offset, options)
+end
+
+# Core._parse gained a `lineno` argument in
+# https://github.com/JuliaLang/julia/pull/43876
+# Prior to this, the following signature was needed:
+function core_parser_hook(code, filename, offset, options)
+    core_parser_hook(code, filename, LineNumberNode(0), offset, options)
 end
 
 # Hack:
