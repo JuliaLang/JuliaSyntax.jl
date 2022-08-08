@@ -32,6 +32,10 @@ handful of failures remaining in the Base tests and standard library.
 The tree data structures should be somewhat usable but will evolve as we try
 out various use cases.
 
+A talk from JuliaCon 2022 covered some aspects of this package.
+
+[![Youtube video thumbnail](https://img.youtube.com/vi/CIiGng9Brrk/mqdefault.jpg)](https://youtu.be/CIiGng9Brrk)
+
 # Examples
 
 Here's what parsing of a small piece of code currently looks like in various
