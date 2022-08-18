@@ -13,12 +13,30 @@ using JuliaSyntax:
 using JuliaSyntax.Tokenize:
     Tokenize,
     tokenize,
-    untokenize,
     Token
 
 tok(str, i = 1) = collect(tokenize(str))[i]
 
-strtok(str) = untokenize.(collect(tokenize(str)), str)
+function untokenize(tok::Token, str, offset=0)
+    String(codeunits(str)[offset+1:tok.endbyte+1])
+end
+
+function strtok(str::AbstractString)
+    tokens = collect(tokenize(str))
+    return strtok(tokens, str)
+end
+
+function strtok(tokens::AbstractVector{Token}, str::AbstractString)
+    strs = String[]
+
+    offset = 0
+    for tok in tokens
+        push!(strs, untokenize(tok, str, offset))
+        offset = tok.endbyte+1
+    end
+    return strs
+end
+
 
 @testset "tokens" begin
     for s in ["a", IOBuffer("a")]
@@ -36,13 +54,14 @@ end # testset
 @testset "tokenize unicode" begin
     str = "𝘋 =2β"
     for s in [str, IOBuffer(str)]
-        l = tokenize(s)
         kinds = [K"Identifier", K"Whitespace", K"=",
                  K"Integer", K"Identifier", K"EndMarker"]
         token_strs = ["𝘋", " ", "=", "2", "β", ""]
-        for (i, n) in enumerate(l)
+        tokens = collect(tokenize(s))
+        strs = strtok(tokens, str)
+        for (i, n) in enumerate(kinds)
             @test kind(n) == kinds[i]
-            @test untokenize(n, str)  == token_strs[i]
+            @test strs[i] == token_strs[i]
         end
     end
 end # testset
@@ -136,10 +155,11 @@ end # testset
     end
 
     @testset "roundtrippability" begin
-        @test join(untokenize.(collect(tokenize(str)), str)) == str
+        @test join(strtok(str)) == str
     end
 
-    @test all((t.endbyte - t.startbyte + 1)==sizeof(untokenize(t, str)) for t in tokenize(str))
+    # TODO: Rewrite based on the fact that `.startbyte` no longer
+    # @test all((t.endbyte - t.startbyte + 1)==sizeof(untokenize(t, str)) for t in tokenize(str))
 end # testset
 
 @testset "issue 5, '..'" begin
@@ -226,8 +246,8 @@ end
     ImageMagick.save(fn, reinterpret(ARGB32, [0xf0884422]''))
     D = ImageMagick.load(fn)
     """
-    tokens = collect(tokenize(str))
-    @test string(untokenize(tokens[16], str))==string(untokenize(tokens[17], str))=="'"
+    strs = strtok(str)
+    @test strs[16] == strs[17] == "'"
 
     test_roundtrip("'a'",  K"Char", "'a'")
     test_roundtrip("''",   K"Char", "''")
@@ -305,218 +325,259 @@ end
     @test tok("0b0101").kind==K"BinInt"
 end
 
-@testset "show" begin
-    io = IOBuffer()
-    show(io, collect(tokenize("\"abc\nd\"ef"))[2])
-    @test String(take!(io)) == "1-5        String         "
+function check_lexing(str, results::Vector{Pair{Kind, String}})
+    offset = 0
+    ts = collect(tokenize(str))
+    for (tok, res) in zip(ts, results)
+        @test tok.kind == res[1]
+        @test untokenize(tok, str, offset) == res[2]
+        offset = tok.endbyte+1
+    end
 end
-
-~(tok::Token, t::Tuple) = tok.kind == t[1] && untokenize(tok, t[3]) == t[2]
 
 @testset "raw strings" begin
     str = raw""" str"x $ \ y" """
-    ts = collect(tokenize(str))
-    @test ts[1] ~ (K"Whitespace" , " "        , str)
-    @test ts[2] ~ (K"Identifier" , "str"      , str)
-    @test ts[3] ~ (K"\""         , "\""       , str)
-    @test ts[4] ~ (K"String"     , "x \$ \\ y", str)
-    @test ts[5] ~ (K"\""         , "\""       , str)
-    @test ts[6] ~ (K"Whitespace" , " "        , str)
-    @test ts[7] ~ (K"EndMarker"  , ""         , str)
+
+    check_lexing(str,
+    [
+        K"Whitespace" => " "        ,
+        K"Identifier" => "str"      ,
+        K"\""         => "\""       ,
+        K"String"     => "x \$ \\ y",
+        K"\""         => "\""       ,
+        K"Whitespace" => " "        ,
+        K"EndMarker"  => ""         ,
+    ])
 
     str = raw"""`x $ \ y`"""
-    ts = collect(tokenize(str))
-    @test ts[1] ~ (K"`"         , "`"         , str)
-    @test ts[2] ~ (K"CmdString" , "x \$ \\ y" , str)
-    @test ts[3] ~ (K"`"         , "`"         , str)
-    @test ts[4] ~ (K"EndMarker" , ""          , str)
+    check_lexing(str,
+    [
+        K"`"         => "`"        ,
+        K"CmdString" => "x \$ \\ y",
+        K"`"         => "`"        ,
+        K"EndMarker" => ""         ,
+    ])
 
     # str"\\"
     str = "str\"\\\\\""
-    ts = collect(tokenize(str))
-    @test ts[1] ~ (K"Identifier" , "str"  , str)
-    @test ts[2] ~ (K"\""         , "\""   , str)
-    @test ts[3] ~ (K"String"     , "\\\\" , str)
-    @test ts[4] ~ (K"\""         , "\""   , str)
-    @test ts[5] ~ (K"EndMarker"  , ""     , str)
+    check_lexing(str,
+    [
+        K"Identifier" => "str" ,
+        K"\""         => "\""  ,
+        K"String"     => "\\\\",
+        K"\""         => "\""  ,
+        K"EndMarker"  => ""    ,
+    ])
 
     # str"\\\""
     str = "str\"\\\\\\\"\""
-    ts = collect(tokenize(str))
-    @test ts[1] ~ (K"Identifier" , "str"      , str)
-    @test ts[2] ~ (K"\""         , "\""       , str)
-    @test ts[3] ~ (K"String"     , "\\\\\\\"" , str)
-    @test ts[4] ~ (K"\""         , "\""       , str)
-    @test ts[5] ~ (K"EndMarker"  , ""         , str)
+    check_lexing(str,
+    [
+        K"Identifier" => "str"     ,
+        K"\""         => "\""      ,
+        K"String"     => "\\\\\\\"",
+        K"\""         => "\""      ,
+        K"EndMarker"  => ""        ,
+    ])
 
     # Contextual keywords and operators allowed as raw string prefixes
-    str = raw""" var"x $ \ y" """
-    ts = collect(tokenize(str))
-    @test ts[2] ~ (K"var"        , "var", str)
-    @test ts[4] ~ (K"String"     , "x \$ \\ y", str)
+    str = raw"""var"x $ \ y" """
+    check_lexing(str,
+    [
+        K"var"        => "var",
+        K"\""         => "\"",
+        K"String"     => "x \$ \\ y",
+    ])
 
-    str = raw""" outer"x $ \ y" """
-    ts = collect(tokenize(str))
-    @test ts[2] ~ (K"outer"      , "outer", str)
-    @test ts[4] ~ (K"String"     , "x \$ \\ y", str)
+    str = raw"""outer"x $ \ y" """
+    check_lexing(str,
+    [
+        K"outer"      => "outer",
+        K"\""         => "\"",
+        K"String"     => "x \$ \\ y",
+    ])
 
-    str = raw""" isa"x $ \ y" """
-    ts = collect(tokenize(str))
-    @test ts[2] ~ (K"isa"        , "isa", str)
-    @test ts[4] ~ (K"String"     , "x \$ \\ y", str)
+    str = raw"""isa"x $ \ y" """
+    check_lexing(str,
+    [
+        K"isa"        => "isa",
+        K"\""         => "\"",
+        K"String"     => "x \$ \\ y",
+    ])
 end
 
 @testset "string escaped newline whitespace" begin
     str = "\"x\\\n \ty\""
-    ts = collect(tokenize(str))
-    @test ts[1] ~ (K"\"", "\"", str)
-    @test ts[2] ~ (K"String", "x", str)
-    @test ts[3] ~ (K"Whitespace", "\\\n \t", str)
-    @test ts[4] ~ (K"String", "y", str)
-    @test ts[5] ~ (K"\"", "\"", str)
+    check_lexing(str,
+    [
+        K"\""=> "\"",
+        K"String"=> "x",
+        K"Whitespace"=> "\\\n \t",
+        K"String"=> "y",
+        K"\""=> "\"",
+    ])
 
     # No newline escape for raw strings
     str = "r\"x\\\ny\""
-    ts = collect(tokenize(str))
-    @test ts[1] ~ (K"Identifier", "r", str)
-    @test ts[2] ~ (K"\"", "\"", str)
-    @test ts[3] ~ (K"String", "x\\\ny", str)
-    @test ts[4] ~ (K"\"", "\"", str)
+    check_lexing(str,
+    [
+        K"Identifier"=> "r",
+        K"\""=> "\"",
+        K"String"=> "x\\\ny",
+        K"\""=> "\"",
+    ])
 end
 
 @testset "triple quoted string line splitting" begin
     str = "\"\"\"\nx\r\ny\rz\n\r\"\"\""
-    ts = collect(tokenize(str))
-    @test ts[1] ~ (K"\"\"\"" , "\"\"\"", str)
-    @test ts[2] ~ (K"String" , "\n", str)
-    @test ts[3] ~ (K"String" , "x\r\n", str)
-    @test ts[4] ~ (K"String" , "y\r", str)
-    @test ts[5] ~ (K"String" , "z\n", str)
-    @test ts[6] ~ (K"String" , "\r", str)
-    @test ts[7] ~ (K"\"\"\"" , "\"\"\"", str)
+    check_lexing(str,
+    [
+        K"\"\"\"" => "\"\"\"",
+        K"String" => "\n",
+        K"String" => "x\r\n",
+        K"String" => "y\r",
+        K"String" => "z\n",
+        K"String" => "\r",
+        K"\"\"\"" => "\"\"\"",
+    ])
 
     # Also for raw strings
     str = "r\"\"\"\nx\ny\"\"\""
-    ts = collect(tokenize(str))
-    @test ts[1] ~ (K"Identifier" , "r", str)
-    @test ts[2] ~ (K"\"\"\""     , "\"\"\"", str)
-    @test ts[3] ~ (K"String"     , "\n", str)
-    @test ts[4] ~ (K"String"     , "x\n", str)
-    @test ts[5] ~ (K"String"     , "y", str)
-    @test ts[6] ~ (K"\"\"\""     , "\"\"\"", str)
+    check_lexing(str,
+    [
+        K"Identifier" => "r",
+        K"\"\"\""     => "\"\"\"",
+        K"String"     => "\n",
+        K"String"     => "x\n",
+        K"String"     => "y",
+        K"\"\"\""     => "\"\"\"",
+    ])
 end
 
 @testset "interpolation" begin
     @testset "basic" begin
         str = "\"\$x \$y\""
-    ts = collect(tokenize(str))
-        @test ts[1]  ~ (K"\""         , "\"", str)
-        @test ts[2]  ~ (K"$"          , "\$", str)
-        @test ts[3]  ~ (K"Identifier" , "x" , str)
-        @test ts[4]  ~ (K"String"     , " " , str)
-        @test ts[5]  ~ (K"$"          , "\$", str)
-        @test ts[6]  ~ (K"Identifier" , "y" , str)
-        @test ts[7]  ~ (K"\""         , "\"", str)
-        @test ts[8]  ~ (K"EndMarker"  , ""  , str)
+        check_lexing(str,
+        [
+            K"\""         => "\"",
+            K"$"          => "\$",
+            K"Identifier" => "x",
+            K"String"     => " ",
+            K"$"          => "\$",
+            K"Identifier" => "y",
+            K"\""         => "\"",
+            K"EndMarker"  => "" ,
+        ])
     end
 
     @testset "nested" begin
         str = """"str: \$(g("str: \$(h("str"))"))" """
-        ts = collect(tokenize(str))
-        @test length(ts) == 23
-        @test ts[1]  ~ (K"\""        , "\""   , str)
-        @test ts[2]  ~ (K"String"    , "str: ", str)
-        @test ts[3]  ~ (K"$"         , "\$"   , str)
-        @test ts[4]  ~ (K"("         , "("    , str)
-        @test ts[5]  ~ (K"Identifier", "g"    , str)
-        @test ts[6]  ~ (K"("         , "("    , str)
-        @test ts[7]  ~ (K"\""        , "\""   , str)
-        @test ts[8]  ~ (K"String"    , "str: ", str)
-        @test ts[9]  ~ (K"$"         , "\$"   , str)
-        @test ts[10] ~ (K"("         , "("    , str)
-        @test ts[11] ~ (K"Identifier", "h"    , str)
-        @test ts[12] ~ (K"("         , "("    , str)
-        @test ts[13] ~ (K"\""        , "\""   , str)
-        @test ts[14] ~ (K"String"    , "str"  , str)
-        @test ts[15] ~ (K"\""        , "\""   , str)
-        @test ts[16] ~ (K")"         , ")"    , str)
-        @test ts[17] ~ (K")"         , ")"    , str)
-        @test ts[18] ~ (K"\""        , "\""   , str)
-        @test ts[19] ~ (K")"         , ")"    , str)
-        @test ts[20] ~ (K")"         , ")"    , str)
-        @test ts[21] ~ (K"\""        , "\""   , str)
-        @test ts[22] ~ (K"Whitespace", " "    , str)
-        @test ts[23] ~ (K"EndMarker" , ""     , str)
+        check_lexing(str,
+        [
+            K"\""        => "\""  ,
+            K"String"    => "str: " ,
+            K"$"         => "\$"  ,
+            K"("         => "("   ,
+            K"Identifier"=> "g"   ,
+            K"("         => "("   ,
+            K"\""        => "\""  ,
+            K"String"    => "str: " ,
+            K"$"         => "\$"  ,
+            K"("         => "("   ,
+            K"Identifier"=> "h"   ,
+            K"("         => "("   ,
+            K"\""        => "\""  ,
+            K"String"    => "str" ,
+            K"\""        => "\""  ,
+            K")"         => ")"   ,
+            K")"         => ")"   ,
+            K"\""        => "\""  ,
+            K")"         => ")"   ,
+            K")"         => ")"   ,
+            K"\""        => "\""  ,
+            K"Whitespace"=> " "   ,
+            K"EndMarker" => ""    ,
+        ])
     end
 
     @testset "duplicate \$" begin
         str = "\"\$\$\""
-    ts = collect(tokenize(str))
-        @test ts[1]  ~ (K"\""        , "\"", str)
-        @test ts[2]  ~ (K"$"         , "\$", str)
-        @test ts[3]  ~ (K"$"         , "\$", str)
-        @test ts[4]  ~ (K"\""        , "\"", str)
-        @test ts[5]  ~ (K"EndMarker" , ""  , str)
+        check_lexing(str,
+        [
+            K"\""        => "\"",
+            K"$"         => "\$",
+            K"$"         => "\$",
+            K"\""        => "\"",
+        ])
     end
 
     @testset "Unmatched parens" begin
         # issue 73: https://github.com/JuliaLang/Tokenize.jl/issues/73
         str = "\"\$(fdsf\""
-    ts = collect(tokenize(str))
-        @test ts[1] ~ (K"\""         , "\""   , str)
-        @test ts[2] ~ (K"$"          , "\$"   , str)
-        @test ts[3] ~ (K"("          , "("    , str)
-        @test ts[4] ~ (K"Identifier" , "fdsf" , str)
-        @test ts[5] ~ (K"\""         , "\""   , str)
-        @test ts[6] ~ (K"EndMarker"  , ""     , str)
+        check_lexing(str,
+        [
+            K"\""         => "\""  ,
+            K"$"          => "\$"  ,
+            K"("          => "("   ,
+            K"Identifier" => "fdsf",
+            K"\""         => "\""  ,
+            K"EndMarker"  => ""    ,
+        ])
     end
 
     @testset "Unicode" begin
         # issue 178: https://github.com/JuliaLang/Tokenize.jl/issues/178
         str = """ "\$uₕx \$(uₕx - ux)" """
-    ts = collect(tokenize(str))
-        @test ts[ 1] ~ (K"Whitespace" , " "   , str)
-        @test ts[ 2] ~ (K"\""         , "\""  , str)
-        @test ts[ 3] ~ (K"$"          , "\$"  , str)
-        @test ts[ 4] ~ (K"Identifier" , "uₕx" , str)
-        @test ts[ 5] ~ (K"String"     , " "   , str)
-        @test ts[ 6] ~ (K"$"          , "\$"  , str)
-        @test ts[ 7] ~ (K"("          , "("   , str)
-        @test ts[ 8] ~ (K"Identifier" , "uₕx" , str)
-        @test ts[ 9] ~ (K"Whitespace" , " "   , str)
-        @test ts[10] ~ (K"-"          , "-"   , str)
-        @test ts[11] ~ (K"Whitespace" , " "   , str)
-        @test ts[12] ~ (K"Identifier" , "ux"  , str)
-        @test ts[13] ~ (K")"          , ")"   , str)
-        @test ts[14] ~ (K"\""         , "\""  , str)
-        @test ts[15] ~ (K"Whitespace" , " "   , str)
-        @test ts[16] ~ (K"EndMarker"  , ""    , str)
+        check_lexing(str,
+        [
+            K"Whitespace" => " "  ,
+            K"\""         => "\"" ,
+            K"$"          => "\$" ,
+            K"Identifier" => "uₕx",
+            K"String"     => " "  ,
+            K"$"          => "\$" ,
+            K"("          => "("  ,
+            K"Identifier" => "uₕx",
+            K"Whitespace" => " "  ,
+            K"-"          => "-"  ,
+            K"Whitespace" => " "  ,
+            K"Identifier" => "ux" ,
+            K")"          => ")"  ,
+            K"\""         => "\"" ,
+            K"Whitespace" => " "  ,
+            K"EndMarker"  => ""   ,
+        ])
     end
 
     @testset "var\"...\" disabled in interpolations" begin
         str = """ "\$var"x" " """
-    ts = collect(tokenize(str))
-        @test ts[ 1] ~ (K"Whitespace" , " "   , str)
-        @test ts[ 2] ~ (K"\""         , "\""  , str)
-        @test ts[ 3] ~ (K"$"          , "\$"  , str)
-        @test ts[ 4] ~ (K"var"        , "var" , str)
-        @test ts[ 5] ~ (K"\""         , "\""  , str)
-        @test ts[ 6] ~ (K"Identifier" , "x"   , str)
-        @test ts[ 7] ~ (K"\""         , "\""  , str)
-        @test ts[ 8] ~ (K"String"     , " "   , str)
-        @test ts[ 9] ~ (K"\""         , "\""  , str)
-        @test ts[10] ~ (K"Whitespace" , " "   , str)
-        @test ts[11] ~ (K"EndMarker"  , ""    , str)
+        check_lexing(str,
+        [
+            K"Whitespace" => " "  ,
+            K"\""         => "\"" ,
+            K"$"          => "\$" ,
+            K"var"        => "var",
+            K"\""         => "\"" ,
+            K"Identifier" => "x"  ,
+            K"\""         => "\"" ,
+            K"String"     => " "  ,
+            K"\""         => "\"" ,
+            K"Whitespace" => " "  ,
+            K"EndMarker"  => ""   ,
+        ])
     end
 
     @testset "invalid chars after identifier" begin
         str = """ "\$x෴" """
-    ts = collect(tokenize(str))
-        @test ts[4] ~ (K"Identifier" , "x" , str)
-        @test ts[5] ~ (K"ErrorInvalidInterpolationTerminator" , ""  , str)
-        @test ts[6] ~ (K"String"     , "෴" , str)
-        @test is_error(ts[5].kind)
-        @test ts[5].kind == K"ErrorInvalidInterpolationTerminator"
+        check_lexing(str,
+        [
+            K"Whitespace" => " ",
+            K"\"" => "\"",
+            K"$" => "\$",
+            K"Identifier" => "x",
+            K"ErrorInvalidInterpolationTerminator" => "" ,
+            K"String"     => "෴",
+        ])
     end
 end
 
@@ -705,7 +766,8 @@ for op in ops
                 tokens = collect(tokenize(str))
                 exop = expr.head == :call ? expr.args[1] : expr.head
                 #println(str)
-                @test Symbol(Tokenize.untokenize(tokens[arity == 1 ? 1 : 3], str)) == exop
+                strs = strtok(tokens, str)
+                @test Symbol(strs[arity == 1 ? 1 : 3]) == exop
             else
                 break
             end
