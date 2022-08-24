@@ -79,7 +79,7 @@ function show_diagnostic(io::IO, diagnostic::Diagnostic, source::SourceFile)
     a,b = source_line_range(source, p, context_lines_before=2, context_lines_after=1)
     c,d = source_line_range(source, q, context_lines_before=1, context_lines_after=2)
 
-    hicol = (100,40,40)
+    hicol = Base.error_color()
 
     # TODO: show line numbers on left
 
