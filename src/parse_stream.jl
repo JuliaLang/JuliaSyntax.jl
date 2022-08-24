@@ -599,12 +599,12 @@ This is useful when surrounding syntax implies the presence of a token.  For
 example, `2x` means `2*x` via the juxtoposition rules.
 """
 function bump_invisible(stream::ParseStream, kind, flags=EMPTY_FLAGS;
-                        error=nothing)
+                        error=nothing, incomplete=nothing)
     b = _next_byte(stream)
     h = SyntaxHead(kind, flags)
     push!(stream.tokens, SyntaxToken(h, b))
-    if !isnothing(error)
-        _emit_diagnostic(stream, b, b-1, error=error)
+    if !isnothing(error) || !isnothing(incomplete)
+        _emit_diagnostic(stream, b, b-1; error, incomplete)
     end
     stream.peek_count = 0
     return position(stream)
@@ -719,15 +719,15 @@ the end of the most recent token which was `bump()`'ed. The starting `mark`
 should be a previous return value of `position()`.
 """
 function emit(stream::ParseStream, mark::ParseStreamPosition, kind::Kind,
-              flags::RawFlags = EMPTY_FLAGS; error=nothing)
+              flags::RawFlags = EMPTY_FLAGS; error=nothing, incomplete=nothing)
     first_token = mark.token_index + 1
     range = TaggedRange(SyntaxHead(kind, flags), first_token, length(stream.tokens))
-    if !isnothing(error)
+    if !isnothing(error) || !isnothing(incomplete)
         # The first child must be a leaf, otherwise ranges would be improperly
         # nested.
         fbyte = token_first_byte(stream, first_token)
         lbyte = token_last_byte(stream, lastindex(stream.tokens))
-        _emit_diagnostic(stream, fbyte, lbyte, error=error)
+        _emit_diagnostic(stream, fbyte, lbyte; error, incomplete)
     end
     push!(stream.ranges, range)
     return position(stream)
@@ -893,9 +893,10 @@ Return the `Vector{UInt8}` text buffer being parsed by this `ParseStream`.
 """
 textbuf(stream) = stream.textbuf
 
-first_byte(stream::ParseStream) = first(stream.tokens).next_byte # Use sentinel token
-last_byte(stream::ParseStream) = _next_byte(stream)-1
-any_error(stream::ParseStream) = any_error(stream.diagnostics)
+first_byte(stream::ParseStream)    = first(stream.tokens).next_byte # Use sentinel token
+last_byte(stream::ParseStream)     = _next_byte(stream)-1
+any_error(stream::ParseStream)     = any_error(stream.diagnostics)
+is_incomplete(stream::ParseStream) = is_incomplete(stream.diagnostics)
 
 function Base.empty!(stream::ParseStream)
     t = last(stream.tokens)

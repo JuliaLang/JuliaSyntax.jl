@@ -151,7 +151,7 @@ function bump_closing_token(ps, closing_kind)
     end
     # mark as trivia => ignore in AST.
     emit(ps, mark, K"error", TRIVIA_FLAG,
-         error="Expected `$(untokenize(closing_kind))`")
+         incomplete="Expected `$(untokenize(closing_kind))`")
     if peek(ps) == closing_kind
         bump(ps, TRIVIA_FLAG)
     end
@@ -164,7 +164,7 @@ function recover(is_closer::Function, ps, flags=EMPTY_FLAGS; mark = position(ps)
         k = peek(ps)
         if k == K"EndMarker"
             bump_invisible(ps, K"error", TRIVIA_FLAG,
-                           error="premature end of input")
+                           incomplete="premature end of input")
             break
         elseif is_closer(ps, k)
             break
@@ -3387,10 +3387,11 @@ function parse_atom(ps::ParseState, check_identifiers=true)
         # Leave closing token in place for other productions to
         # recover with
         # )  ==>  error
-        msg = leading_kind == K"EndMarker" ?
-              "premature end of input" :
-              "unexpected closing token"
-        bump_invisible(ps, K"error", error=msg)
+        if leading_kind == K"EndMarker"
+            bump_invisible(ps, K"error", incomplete="premature end of input")
+        else
+            bump_invisible(ps, K"error", error="unexpected closing token")
+        end
     else
         bump(ps, error="invalid syntax atom")
     end

@@ -31,7 +31,17 @@
 
         # Check that Meta.parse throws the JuliaSyntax.ParseError rather than
         # Meta.ParseError when Core integration is enabled.
-        @test_throws JuliaSyntax.ParseError Meta.parse("[x")
+        @test_throws JuliaSyntax.ParseError Meta.parse("a b")
+
+        # generate :incomplete expressions
+        for s = String[
+                "1 + ",
+                "code_typed((Float64,)) do x",
+                "[a for a = 1:10",
+                "(a for a = 1:10"
+            ]
+            @test Meta.isexpr(Meta.parse(s), :incomplete)
+        end
 
         JuliaSyntax.enable_in_core!(false)
     end

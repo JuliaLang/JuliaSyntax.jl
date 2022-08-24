@@ -29,17 +29,22 @@ struct Diagnostic
     message::String
 end
 
-function Diagnostic(first_byte, last_byte; error=nothing, warning=nothing)
-    message = !isnothing(error)   ? error :
-              !isnothing(warning) ? warning :
+function Diagnostic(first_byte, last_byte; error=nothing, warning=nothing, incomplete=nothing)
+    message = !isnothing(error)      ? error :
+              !isnothing(warning)    ? warning :
+              !isnothing(incomplete) ? incomplete :
               Base.error("No message in diagnostic")
-    level = !isnothing(error) ? :error : :warning
+    level = !isnothing(error) ? :error : !isnothing(incomplete) ? :incomplete : :warning
     Diagnostic(first_byte, last_byte, level, message)
 end
 
-first_byte(d::Diagnostic) = d.first_byte
-last_byte(d::Diagnostic)  = d.last_byte
-is_error(d::Diagnostic)   = d.level == :error
+first_byte(d::Diagnostic)    = d.first_byte
+last_byte(d::Diagnostic)     = d.last_byte
+is_error(d::Diagnostic)      = d.level == :error
+is_incomplete(d::Diagnostic) = d.level == :incomplete
+
+any_error(ds::AbstractVector{Diagnostic}) = any(is_error, ds)
+is_incomplete(ds::AbstractVector{Diagnostic}) = any(is_incomplete, ds)
 
 function show_diagnostic(io::IO, diagnostic::Diagnostic, source::SourceFile)
     color,prefix = diagnostic.level == :error   ? (:light_red, "Error")      :
@@ -119,8 +124,4 @@ function show_diagnostics(io::IO, diagnostics::AbstractVector{Diagnostic}, text:
     if !isempty(diagnostics)
         show_diagnostics(io, diagnostics, SourceFile(text))
     end
-end
-
-function any_error(diagnostics::AbstractVector{Diagnostic})
-    any(is_error(d) for d in diagnostics)
 end

@@ -1,4 +1,3 @@
-
 @testset "Expr conversion" begin
     @testset "Quote nodes" begin
         @test parseall(Expr, ":(a)", rule=:atom) == QuoteNode(:a)

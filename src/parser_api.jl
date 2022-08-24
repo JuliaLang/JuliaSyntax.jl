@@ -155,7 +155,7 @@ function parseall(::Type{T}, input...; rule=:toplevel, version=VERSION,
        (!ignore_trivia && (peek(stream, skip_newlines=false, skip_whitespace=false) != K"EndMarker"))
         emit_diagnostic(stream, error="unexpected text after parsing $rule")
     end
-    if any_error(stream.diagnostics)
+    if any_error(stream)
         source = SourceFile(sourcetext(stream, steal_textbuf=true), filename=filename)
         throw(ParseError(source, stream.diagnostics))
     end
@@ -174,4 +174,3 @@ function parseall(::Type{T}, input...; rule=:toplevel, version=VERSION,
     end
     tree
 end
-

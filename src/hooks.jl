@@ -92,8 +92,11 @@ function _core_parser_hook(code, filename, lineno, offset, options)
             bump_trivia(stream)
         end
 
-        if any_error(stream)
-            e = Expr(:error, ParseError(SourceFile(code, filename=filename), stream.diagnostics))
+        incomplete = is_incomplete(stream)
+        error = any_error(stream)
+        if incomplete || error
+            err = ParseError(SourceFile(code, filename=filename), stream.diagnostics)
+            e = Expr(incomplete ? :incomplete : :error, err)
             ex = options === :all ? Expr(:toplevel, e) : e
         else
             ex = build_tree(Expr, stream, filename=filename, wrap_toplevel_as_kind=K"None")
