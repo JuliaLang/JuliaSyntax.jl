@@ -31,7 +31,7 @@ Base.display_error(io::IO, err::ParseError, bt) = Base.showerror(io, err, bt)
     parse!(stream::ParseStream; rule=:toplevel)
 
 Parse Julia source code from a [`ParseStream`](@ref) object. Output tree data
-structures may be extracted from `stream` with the `build_tree()` function.
+structures may be extracted from `stream` with the [`build_tree`](@ref) function.
 
 `rule` may be any of
 * `:toplevel` (default) — parse a whole "file" of top level statements. In this
