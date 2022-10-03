@@ -166,7 +166,7 @@ Construct a `ParseStream` from input which may come in various forms:
 * A buffer of bytes (zero copy). The caller is responsible for preserving
   buffers passed as `(ptr,len)`.
 
-A byte `index` may provided as the position to start parsing.
+A byte `index` may be provided as the position to start parsing.
 
 ParseStream provides an IO interface for the parser which provides lexing of
 the source text input into tokens, manages insignificant whitespace tokens on
