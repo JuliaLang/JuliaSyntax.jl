@@ -160,10 +160,11 @@ const NO_POSITION = ParseStreamPosition(0, 0)
     ParseStream(text::Vector{UInt8},           index::Integer=1; version=VERSION)
     ParseStream(ptr::Ptr{UInt8}, len::Integer, index::Integer=1; version=VERSION)
 
-Construct a `ParseStream` from source `text` which may come in various forms -
-a string, an `IO` object, or a buffer of bytes. In the case that the buffer is
-passed as `ptr,len`, the caller is responsible for preserving the buffer during
-parsing.
+Construct a `ParseStream` from input which may come in various forms:
+* An string (zero copy for `String` and `SubString`)
+* An `IO` object (zero copy for `IOBuffer`). The `IO` object must be seekable.
+* A buffer of bytes (zero copy). The caller is responsible for preserving
+  buffers passed as `(ptr,len)`.
 
 A byte `index` may provided as the position to start parsing.
 

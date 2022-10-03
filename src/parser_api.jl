@@ -55,17 +55,17 @@ function parse!(stream::ParseStream; rule::Symbol=:toplevel)
 end
 
 """
-    parse!(io::IO; rule=:toplevel, version=VERSION)
+    parse!(TreeType, io::IO; rule=:toplevel, version=VERSION)
 
 Parse Julia source code from a seekable `IO` object. The output is a tuple
-`(tree, diagnostics)`. The `io` position will be set to the next byte of input
-after parsing.
+`(tree, diagnostics)`. When `parse!` returns, the stream `io` is positioned
+directly after the last byte which was consumed during parsing.
 """
-function parse!(::Type{T}, io::IO;
-                rule::Symbol=:toplevel, version=VERSION, kws...) where {T}
+function parse!(::Type{TreeType}, io::IO;
+                rule::Symbol=:toplevel, version=VERSION, kws...) where {TreeType}
     stream = ParseStream(io; version=version)
     parse!(stream; rule=rule)
-    tree = build_tree(T, stream; kws...)
+    tree = build_tree(TreeType, stream; kws...)
     seek(io, last_byte(stream))
     tree, stream.diagnostics
 end
@@ -130,14 +130,14 @@ source file name.
 A `ParseError` will be thrown if any errors or warnings occurred during
 parsing. To avoid exceptions due to warnings, use `ignore_warnings=true`.
 """
-parse(T, text::AbstractString; kws...) = _parse(:statement, true, T, text; kws...)[1]
-parseall(T, text::AbstractString; kws...) = _parse(:toplevel, true, T, text; kws...)[1]
-parseatom(T, text::AbstractString; kws...) = _parse(:atom, true, T, text; kws...)[1]
+parse(::Type{T}, text::AbstractString; kws...) where {T} = _parse(:statement, true, T, text; kws...)[1]
+parseall(::Type{T}, text::AbstractString; kws...) where {T} = _parse(:toplevel, true, T, text; kws...)[1]
+parseatom(::Type{T}, text::AbstractString; kws...) where {T} = _parse(:atom, true, T, text; kws...)[1]
 
 @eval @doc $(@doc parse) parseall
 @eval @doc $(@doc parse) parseatom
 
-parse(T, text::AbstractString, index::Integer; kws...) = _parse(:statement, false, T, text, index; kws...)
-parseall(T, text::AbstractString, index::Integer; kws...) = _parse(:toplevel, false, T, text, index; kws...)
-parseatom(T, text::AbstractString, index::Integer; kws...) = _parse(:atom, false, T, text, index; kws...)
+parse(::Type{T}, text::AbstractString, index::Integer; kws...) where {T} = _parse(:statement, false, T, text, index; kws...)
+parseall(::Type{T}, text::AbstractString, index::Integer; kws...) where {T} = _parse(:toplevel, false, T, text, index; kws...)
+parseatom(::Type{T}, text::AbstractString, index::Integer; kws...) where {T} = _parse(:atom, false, T, text, index; kws...)
 
