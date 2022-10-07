@@ -166,7 +166,9 @@
                            :body)))
     end
 
-    @testset "= to Expr(:kw) conversion" begin
+    @testset "= vs Expr(:kw)" begin
+        # TODO: Cover these in parser.jl ?
+
         # Call
         @test parse(Expr, "f(a=1)") ==
             Expr(:call, :f, Expr(:kw, :a, 1))
