@@ -508,7 +508,7 @@ end
 #
 # flisp: parse-eq
 function parse_eq(ps::ParseState)
-    parse_assignment(ps, parse_comma, false)
+    parse_assignment(ps, parse_comma)
 end
 
 # parse_eq_star is used where commas are special, for example in an argument list
@@ -517,7 +517,7 @@ end
 # output list so that it can be changed to `(kw x y)` later if necessary.
 #
 # flisp: parse-eq*
-function parse_eq_star(ps::ParseState, equals_is_kw=false)
+function parse_eq_star(ps::ParseState)
     k = peek(ps)
     k2 = peek(ps,2)
     if (is_literal(k) || k == K"Identifier") && k2 in KSet", ) } ]"
@@ -526,20 +526,20 @@ function parse_eq_star(ps::ParseState, equals_is_kw=false)
         bump(ps)
         return NO_POSITION
     else
-        return parse_assignment(ps, parse_pair, equals_is_kw)
+        return parse_assignment(ps, parse_pair)
     end
 end
 
 # a = b  ==>  (= a b)
 #
 # flisp: parse-assignment
-function parse_assignment(ps::ParseState, down, equals_is_kw::Bool)
+function parse_assignment(ps::ParseState, down)
     mark = position(ps)
     down(ps)
-    parse_assignment_with_initial_ex(ps, mark, down, equals_is_kw)
+    parse_assignment_with_initial_ex(ps, mark, down)
 end
 
-function parse_assignment_with_initial_ex(ps::ParseState, mark, down::T, equals_is_kw::Bool) where {T} # where => specialize on `down`
+function parse_assignment_with_initial_ex(ps::ParseState, mark, down::T) where {T} # where => specialize on `down`
     t = peek_token(ps)
     k = kind(t)
     if !is_prec_assignment(k)
@@ -555,17 +555,16 @@ function parse_assignment_with_initial_ex(ps::ParseState, mark, down::T, equals_
         # a ~ b      ==>  (call-i a ~ b)
         # [a ~ b c]  ==>  (hcat (call-i a ~ b) c)
         bump(ps)
-        parse_assignment(ps, down, equals_is_kw)
+        parse_assignment(ps, down)
         emit(ps, mark, K"call", INFIX_FLAG)
         return NO_POSITION
     else
         # a += b  ==>  (+= a b)
         # a .= b  ==>  (.= a b)
         bump(ps, TRIVIA_FLAG)
-        parse_assignment(ps, down, equals_is_kw)
-        plain_eq = is_plain_equals(t)
-        equals_pos = emit(ps, mark, plain_eq && equals_is_kw ? K"kw" : k, flags(t))
-        return plain_eq ? equals_pos : NO_POSITION
+        parse_assignment(ps, down)
+        equals_pos = emit(ps, mark, k, flags(t))
+        return is_plain_equals(t) ? equals_pos : NO_POSITION
     end
 end
 
@@ -1944,7 +1943,7 @@ function parse_const_local_global(ps)
         # const x = 1   ==>  (const (= x 1))
         # global x ~ 1  ==>  (global (call-i x ~ 1))
         # global x += 1 ==>  (global (+= x 1))
-        parse_assignment_with_initial_ex(ps, beforevar_mark, parse_comma, false)
+        parse_assignment_with_initial_ex(ps, beforevar_mark, parse_comma)
     else
         # global x    ==>  (global x)
         # local x     ==>  (local x)

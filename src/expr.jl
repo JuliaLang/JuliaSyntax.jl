@@ -118,8 +118,9 @@ function _to_expr(node::SyntaxNode, iteration_spec=false, need_linenodes=true)
     if is_infix(node.raw)
         args[2], args[1] = args[1], args[2]
     end
+
+    # Special cases for various expression heads
     loc = source_location(LineNumberNode, node.source, node.position)
-    # Convert elements
     if headsym == :macrocall
         insert!(args, 2, loc)
     elseif headsym in (:call, :ref)
@@ -128,7 +129,7 @@ function _to_expr(node::SyntaxNode, iteration_spec=false, need_linenodes=true)
             insert!(args, 2, args[end])
             pop!(args)
         end
-    elseif headsym in (:tuple, :parameters, :vect)
+    elseif headsym in (:tuple, :parameters, :vect, :braces)
         # Move parameters blocks to args[1]
         if length(args) > 1 && Meta.isexpr(args[end], :parameters)
             pushfirst!(args, args[end])
@@ -181,7 +182,7 @@ function _to_expr(node::SyntaxNode, iteration_spec=false, need_linenodes=true)
     # elseif headsym == :string && length(args) == 1 && version <= (1,5)
     #   Strip string from interpolations in 1.5 and lower to preserve
     #   "hi$("ho")" ==>  (string "hi" "ho")
-    elseif headsym == :(=)
+    elseif headsym == :(=) && !is_decorated(node)
         if is_eventually_call(args[1]) && !iteration_spec && !Meta.isexpr(args[2], :block)
             # Add block for short form function locations
             args[2] = Expr(:block, loc, args[2])
@@ -191,10 +192,7 @@ function _to_expr(node::SyntaxNode, iteration_spec=false, need_linenodes=true)
         args[1] = Expr(:block, loc, args[1])
     elseif headsym == :(->)
         if Meta.isexpr(args[2], :block)
-            parent = node.parent
-            if parent isa SyntaxNode && kind(parent) != K"do"
-                pushfirst!(args[2].args, loc)
-            end
+            pushfirst!(args[2].args, loc)
         else
             # Add block for source locations
             args[2] = Expr(:block, loc, args[2])
