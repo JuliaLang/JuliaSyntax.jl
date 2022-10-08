@@ -25,32 +25,23 @@ TOKEN_ERROR_DESCRIPTION = Dict{Kind, String}(
 struct Token
     kind::Kind
     # Offsets into a string or buffer
-    startbyte::Int # The byte where the token start in the buffer
     endbyte::Int # The byte where the token ended in the buffer
     dotop::Bool
     suffix::Bool
 end
-function Token(kind::Kind, startbyte::Int, endbyte::Int)
-    Token(kind, startbyte, endbyte, false, false)
+function Token(kind::Kind, endbyte::Int)
+    Token(kind, endbyte, false, false)
 end
-Token() = Token(K"error", 0, 0, false, false)
+Token() = Token(K"error", 0, false, false)
 
 const EMPTY_TOKEN = Token()
 
 kind(t::Token) = t.kind
 
-startbyte(t::Token) = t.startbyte
 endbyte(t::Token) = t.endbyte
 
 
-function untokenize(t::Token, str::String)
-    String(codeunits(str)[1 .+ (t.startbyte:t.endbyte)])
-end
 
-function Base.show(io::IO, t::Token)
-    print(io, rpad(string(startbyte(t), "-", endbyte(t)), 11, " "))
-    print(io, rpad(kind(t), 15, " "))
-end
 
 #-------------------------------------------------------------------------------
 # Lexer
@@ -77,9 +68,7 @@ Ideally a lexer is stateless but some state is needed here for:
 """
 mutable struct Lexer{IO_t <: IO}
     io::IO_t
-
     token_startpos::Int
-
     last_token::Kind
     string_states::Vector{StringState}
     chars::Tuple{Char,Char,Char,Char}
@@ -157,13 +146,6 @@ Return the latest `Token`'s starting position.
 startpos(l::Lexer) = l.token_startpos
 
 """
-    startpos!(l::Lexer, i::Integer)
-
-Set a new starting position.
-"""
-startpos!(l::Lexer, i::Integer) = l.token_startpos = i
-
-"""
     peekchar(l::Lexer)
 
 Returns the next character without changing the lexer's state.
@@ -171,14 +153,14 @@ Returns the next character without changing the lexer's state.
 peekchar(l::Lexer) = l.chars[2]
 
 """
-dpeekchar(l::Lexer)
+    dpeekchar(l::Lexer)
 
 Returns the next two characters without changing the lexer's state.
 """
 dpeekchar(l::Lexer) = l.chars[2], l.chars[3]
 
 """
-peekchar3(l::Lexer)
+    peekchar3(l::Lexer)
 
 Returns the next three characters without changing the lexer's state.
 """
@@ -198,8 +180,6 @@ Determine whether the end of the lexer's underlying buffer has been reached.
 """
 Base.eof(l::Lexer) = eof(l.io)
 
-Base.seek(l::Lexer, pos) = seek(l.io, pos)
-
 """
     start_token!(l::Lexer)
 
@@ -215,9 +195,6 @@ end
 
 Returns the next character and increments the current position.
 """
-function readchar end
-
-
 function readchar(l::Lexer)
     c = readchar(l.io)
     l.chars = (l.chars[2], l.chars[3], l.chars[4], c)
@@ -271,8 +248,7 @@ function emit(l::Lexer, kind::Kind)
             suffix = true
         end
     end
-
-    tok = Token(kind, startpos(l), position(l) - 1, l.dotop, suffix)
+    tok = Token(kind, position(l) - 1, l.dotop, suffix)
 
     l.dotop = false
     l.last_token = kind
