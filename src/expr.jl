@@ -131,11 +131,11 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
         # Julia's standard `Expr` ASTs have children stored in a canonical
         # order which is often not always source order. We permute the children
         # here as necessary to get the canonical order.
-        if is_infix_op_call(node) || is_suffix_op_call(node)
+        if is_infix_op_call(node) || is_postfix_op_call(node)
             args[2], args[1] = args[1], args[2]
         end
         # Lower (call x ') to special ' head
-        if is_suffix_op_call(node) && args[1] == Symbol("'")
+        if is_postfix_op_call(node) && args[1] == Symbol("'")
             popfirst!(args)
             headsym = Symbol("'")
         end

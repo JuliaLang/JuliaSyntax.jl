@@ -82,10 +82,8 @@ function untokenize(head::SyntaxHead; unique=true, include_flag_suff=true)
         str = str*"-"
         is_trivia(head)  && (str = str*"t")
         is_infix_op_call(head)          && (str = str*"i")
-        # call op flag name mnemonic: i-infix, h,j - left and right of `i` in
-        # alphabetic order
-        is_prefix_op_call(head) && (str = str*"h")
-        is_suffix_op_call(head) && (str = str*"j")
+        is_prefix_op_call(head)  && (str = str*"pre")
+        is_postfix_op_call(head) && (str = str*"post")
         has_flags(head, TRIPLE_STRING_FLAG) && (str = str*"s")
         has_flags(head, RAW_STRING_FLAG) && (str = str*"r")
         is_suffixed(head) && (str = str*"S")
@@ -108,10 +106,10 @@ has_flags(x, test_flags) = has_flags(flags(x), test_flags)
 call_type_flags(x) = call_type_flags(flags(x))
 
 is_trivia(x) = has_flags(x, TRIVIA_FLAG)
-is_prefix_call(x)    = call_type_flags(x) == PREFIX_CALL_FLAG
-is_infix_op_call(x)  = call_type_flags(x) == INFIX_FLAG
-is_prefix_op_call(x) = call_type_flags(x) == PREFIX_OP_FLAG
-is_suffix_op_call(x) = call_type_flags(x) == POSTFIX_OP_FLAG
+is_prefix_call(x)     = call_type_flags(x) == PREFIX_CALL_FLAG
+is_infix_op_call(x)   = call_type_flags(x) == INFIX_FLAG
+is_prefix_op_call(x)  = call_type_flags(x) == PREFIX_OP_FLAG
+is_postfix_op_call(x) = call_type_flags(x) == POSTFIX_OP_FLAG
 is_dotted(x) = has_flags(x, DOTOP_FLAG)
 is_suffixed(x) = has_flags(x, SUFFIXED_FLAG)
 is_decorated(x) = is_dotted(x) || is_suffixed(x)

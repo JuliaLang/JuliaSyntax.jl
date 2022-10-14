@@ -544,7 +544,7 @@ function parse_assignment_with_initial_ex(ps::ParseState, mark, down::T) where {
     if k == K"~"
         if ps.space_sensitive && !preceding_whitespace(peek_token(ps, 2))
             # Unary ~ in space sensitive context is not assignment precedence
-            # [a ~b]  ==>  (hcat a (call-h ~ b))
+            # [a ~b]  ==>  (hcat a (call-pre ~ b))
             return
         end
         # ~ is the only non-syntactic assignment-precedence operator.
@@ -885,8 +885,8 @@ function parse_with_chains(ps::ParseState, down, is_op, chain_ops)
                 is_both_unary_and_binary(t) &&
                 !preceding_whitespace(peek_token(ps, 2))
             # The following is two elements of a hcat
-            # [x +y]     ==>  (hcat x (call-h + y))
-            # [x+y +z]   ==>  (hcat (call-i x + y) (call-h + z))
+            # [x +y]     ==>  (hcat x (call-pre + y))
+            # [x+y +z]   ==>  (hcat (call-i x + y) (call-pre + z))
             # Conversely the following are infix calls
             # [x +₁y]    ==>  (vect (call-i x +₁ y))
             # [x+y+z]    ==>  (vect (call-i x + y z))
@@ -914,7 +914,7 @@ function parse_chain(ps::ParseState, down, op_kind)
         if ps.space_sensitive && preceding_whitespace(t) &&
             is_both_unary_and_binary(t) &&
             !preceding_whitespace(peek_token(ps, 2))
-            # [x +y]  ==>  (hcat x (call-h + y))
+            # [x +y]  ==>  (hcat x (call-pre + y))
             break
         end
         bump(ps, TRIVIA_FLAG)
@@ -948,10 +948,10 @@ function parse_unary_subtype(ps::ParseState)
         elseif k2 in KSet"{ ("
             # parse <:{T}(x::T) or <:(x::T) like other unary operators
             # <:{T}(x::T)  ==>  (call (curly <: T) (:: x T))
-            # <:(x::T)     ==>  (<:-h (:: x T))
+            # <:(x::T)     ==>  (<:-pre (:: x T))
             parse_where(ps, parse_juxtapose)
         else
-            # <: A where B  ==>  (<:-h (where A B))
+            # <: A where B  ==>  (<:-pre (where A B))
             mark = position(ps)
             bump(ps, TRIVIA_FLAG)
             parse_where(ps, parse_juxtapose)
@@ -1015,7 +1015,7 @@ function is_juxtapose(ps, prev_k, t)
     # Not juxtaposition - parse_juxtapose will consume only the first token.
     # x.3       ==>  x
     # sqrt(2)2  ==>  (call sqrt 2)
-    # x' y      ==>  (call-j x ')
+    # x' y      ==>  (call-post x ')
     # x 'y      ==>  x
 
     return !preceding_whitespace(t)                         &&
@@ -1039,7 +1039,7 @@ end
 # 2(x)     ==>  (call-i 2 * x)
 # (2)(3)x  ==>  (call-i 2 * 3 x)
 # (x-1)y   ==>  (call-i (call-i x - 1) * y)
-# x'y      ==>  (call-i (call-j x ') * y)
+# x'y      ==>  (call-i (call-post x ') * y)
 #
 # flisp: parse-juxtapose
 function parse_juxtapose(ps::ParseState)
@@ -1098,8 +1098,8 @@ function parse_unary(ps::ParseState)
             if is_prec_power(k3) || k3 in KSet"[ {"
                 # `[`, `{` (issue #18851) and `^` have higher precedence than
                 # unary negation
-                # -2^x      ==>  (call-h - (call-i 2 ^ x))
-                # -2[1, 3]  ==>  (call-h - (ref 2 1 3))
+                # -2^x      ==>  (call-pre - (call-i 2 ^ x))
+                # -2[1, 3]  ==>  (call-pre - (ref 2 1 3))
                 bump(ps)
                 parse_factor(ps)
                 emit(ps, mark, K"call", PREFIX_OP_FLAG)
@@ -1115,17 +1115,17 @@ function parse_unary(ps::ParseState)
         end
     end
     # Things which are not quite negative literals result in a unary call instead
-    # -0x1 ==>  (call-h - 0x01)
-    # - 2  ==>  (call-h - 2)
-    # .-2  ==>  (call-h .- 2)
+    # -0x1 ==>  (call-pre - 0x01)
+    # - 2  ==>  (call-pre - 2)
+    # .-2  ==>  (call-pre .- 2)
     parse_unary_call(ps)
 end
 
 # Parse calls to unary operators and prefix calls involving arbitrary operators
 # with bracketed arglists (as opposed to infix notation)
 #
-# +a      ==>  (call-h + a)
-# +(a,b)  ==>  (call-h + a b)
+# +a      ==>  (call-pre + a)
+# +(a,b)  ==>  (call-pre + a b)
 #
 # flisp: parse-unary-call
 function parse_unary_call(ps::ParseState)
@@ -1208,14 +1208,14 @@ function parse_unary_call(ps::ParseState)
         else
             # Unary function calls with brackets as grouping, not an arglist
             if opts.is_block
-                # +(a;b)   ==>  (call-h + (block a b))
+                # +(a;b)   ==>  (call-pre + (block a b))
                 emit(ps, mark_before_paren, K"block")
             end
             # Not a prefix operator call but a block; `=` is not `kw`
-            # +(a=1)  ==>  (call-h + (= a 1))
+            # +(a=1)  ==>  (call-pre + (= a 1))
             # Unary operators have lower precedence than ^
-            # +(a)^2  ==>  (call-h + (call-i a ^ 2))
-            # +(a)(x,y)^2  ==>  (call-h + (call-i (call a x y) ^ 2))
+            # +(a)^2  ==>  (call-pre + (call-i a ^ 2))
+            # +(a)(x,y)^2  ==>  (call-pre + (call-i (call a x y) ^ 2))
             parse_call_chain(ps, mark_before_paren)
             parse_factor_with_initial_ex(ps, mark_before_paren)
             emit(ps, mark, op_node_kind, PREFIX_OP_FLAG)
@@ -1223,14 +1223,14 @@ function parse_unary_call(ps::ParseState)
     else
         if is_unary_op(op_t)
             # Normal unary calls
-            # +x  ==>  (call-h + x)
-            # √x  ==>  (call-h √ x)
-            # ±x  ==>  (call-h ± x)
+            # +x  ==>  (call-pre + x)
+            # √x  ==>  (call-pre √ x)
+            # ±x  ==>  (call-pre ± x)
             bump(ps, op_tok_flags)
         else
-            # /x     ==>  (call-h (error /) x)
-            # +₁ x   ==>  (call-h (error +₁) x)
-            # .<: x  ==>  (call-h (error .<:) x)
+            # /x     ==>  (call-pre (error /) x)
+            # +₁ x   ==>  (call-pre (error +₁) x)
+            # .<: x  ==>  (call-pre (error .<:) x)
             bump(ps, error="not a unary operator")
         end
         parse_unary(ps)
@@ -1565,8 +1565,8 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
                 this_iter_valid_macroname = true
             end
         elseif k == K"'" && !preceding_whitespace(t)
-            # f'  ==> (call-j f ')
-            # f'ᵀ ==> (call-j f 'ᵀ)
+            # f'  ==> (call-post f ')
+            # f'ᵀ ==> (call-post f 'ᵀ)
             bump(ps)
             emit(ps, mark, K"call", POSTFIX_OP_FLAG)
         elseif k == K"{"
