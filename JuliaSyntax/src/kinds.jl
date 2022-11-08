@@ -823,6 +823,8 @@ const _kind_names =
     "'"
     ".'"
     "->"
+    "/>"
+    "\\>"
 
     "BEGIN_UNICODE_OPS"
         "¬"
@@ -878,6 +880,7 @@ const _kind_names =
         "block"
         "call"
         "dotcall"
+        "chain"
         "comparison"
         "curly"
         "inert"          # QuoteNode; not quasiquote

@@ -820,7 +820,29 @@ end
 # x .|> y      ==>  (dotcall-i x |> y)
 # flisp: parse-pipe>
 function parse_pipe_gt(ps::ParseState)
-    parse_LtoR(ps, parse_range, is_prec_pipe_gt)
+    parse_LtoR(ps, parse_curry_chain, is_prec_pipe_gt)
+end
+
+# x /> f(y) /> g(z)  ==>  (chain x (/> f y) (/> g z))
+# x /> A.f(y)        ==>  (chain x (/> (. A (quote f)) y))
+function parse_curry_chain(ps::ParseState)
+    mark = position(ps)
+    parse_range(ps)
+    has_chain = false
+    while (k = peek(ps); k == K"/>" || k == K"\>")
+        bump(ps, TRIVIA_FLAG)
+        m = position(ps)
+        parse_range(ps)
+        if peek_behind(ps).kind == K"call"
+            has_chain = true
+            reset_node!(ps, position(ps), kind=k)
+        else
+            emit(ps, m, K"error", error="Expected call to the right of />")
+        end
+    end
+    if has_chain
+        emit(ps, mark, K"chain")
+    end
 end
 
 # parse ranges and postfix ...
