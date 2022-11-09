@@ -324,24 +324,73 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
             args[1] = Expr(headsym, args[1].args...)
             headsym = :const
         end
-    elseif headsym == Symbol("/>")
+    elseif headsym == Symbol("/>") || headsym == Symbol("\\>")
         freearg = gensym()
-        cargs = [args[1], freearg, args[2:end]...]
-        reorder_parameters!(cargs, 2)
-        return Expr(:->, freearg, Expr(:call, cargs...))
-    elseif headsym == Symbol("\\>")
-        freearg = gensym()
-        cargs = [args[1], args[2:end]..., freearg]
-        reorder_parameters!(cargs, 2)
-        return Expr(:->, freearg, Expr(:call, cargs...))
+        callex = only(args)
+        @assert Meta.isexpr(callex, :call)
+        args = callex.args
+        func = headsym == Symbol("/>") ?
+            :(JuliaSyntax.fixbutfirst) :
+            :(JuliaSyntax.fixbutlast)
+        if length(args) >= 2 && Meta.isexpr(args[2], :parameters)
+            return Expr(:call, func, args[2], args[1], args[3:end]...)
+        else
+            return Expr(:call, func, args...)
+        end
     elseif headsym == :chain
-        return Expr(:call, :(JuliaSyntax.chain), args...)
+        if kind(node_args[1]) in KSet"/> \>"
+            return Expr(:call, :(JuliaSyntax.compose_chain), args...)
+        else
+            return Expr(:call, :(JuliaSyntax.chain), args...)
+        end
     end
     return Expr(headsym, args...)
 end
 
+#-------------------------------------------------------------------------------
+# Targets for lowering /> and \> syntax
+
+# For use with />
+struct FixButFirst{F,Args,Kws}
+    f::F
+    args::Args
+    kwargs::Kws
+end
+
+(f::FixButFirst)(x) = f.f(x, f.args...; f.kwargs...)
+
+"""
+Fix all arguments except for the first
+"""
+fixbutfirst(f, args...; kws...) = FixButFirst(f, args, kws)
+
+# For use with \>
+struct FixButLast{F,Args,Kws}
+    f::F
+    args::Args
+    kwargs::Kws
+end
+
+(f::FixButLast)(x) = f.f(f.args..., x; f.kwargs...)
+
+"""
+Fix all arguments except for the last
+"""
+fixbutlast(f, args...; kws...) = FixButLast(f, args, kws)
+
 chain(x, f, fs...) = chain(f(x), fs...)
 chain(x) = x
+
+struct ComposeChain{Funcs}
+    fs::Funcs
+end
+
+(f::ComposeChain)(x) = chain(x, f.fs...)
+
+compose_chain(fs...) = ComposeChain(fs)
+
+
+#-------------------------------------------------------------------------------
 
 Base.Expr(node::SyntaxNode) = _to_expr(node)
 

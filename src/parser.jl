@@ -827,20 +827,22 @@ end
 # x /> A.f(y)        ==>  (chain x (/> (. A (quote f)) y))
 function parse_curry_chain(ps::ParseState)
     mark = position(ps)
-    parse_range(ps)
-    has_chain = false
+    nterms = 0
+    if (k = peek(ps); k != K"/>" && k != K"\>")
+        parse_range(ps)
+        nterms += 1
+    end
     while (k = peek(ps); k == K"/>" || k == K"\>")
         bump(ps, TRIVIA_FLAG)
         m = position(ps)
         parse_range(ps)
-        if peek_behind(ps).kind == K"call"
-            has_chain = true
-            reset_node!(ps, position(ps), kind=k)
-        else
+        nterms += 1
+        if peek_behind(ps).kind != K"call"
             emit(ps, m, K"error", error="Expected call to the right of />")
         end
+        emit(ps, m, k)
     end
-    if has_chain
+    if nterms > 1
         emit(ps, mark, K"chain")
     end
 end
