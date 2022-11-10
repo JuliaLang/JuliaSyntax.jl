@@ -381,6 +381,12 @@ fixbutlast(f, args...; kws...) = FixButLast(f, args, kws)
 chain(x, f, fs...) = chain(f(x), fs...)
 chain(x) = x
 
+# An example of how chain() can be used to rewrite
+# `x \> map(f) \> reduce(g)` into `mapreduce(f, g, x)`
+function chain(x, f1::FixButLast{typeof(map)}, f2::FixButLast{typeof(reduce)}, fs...)
+    chain(x, fixbutlast(mapreduce, f1.args..., f2.args...; f1.kwargs..., f2.kwargs...), fs...)
+end
+
 struct ComposeChain{Funcs}
     fs::Funcs
 end
