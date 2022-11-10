@@ -131,6 +131,16 @@ tests = [
         "x |> y |> z" => "(call-i (call-i x |> y) |> z)"
         "x .|> y"     => "(dotcall-i x |> y)"
     ],
+    JuliaSyntax.parse_curry_chain => [
+        "x /> f(a)"  =>  "(chain x (/> (call f a)))"
+        "/> f(a)"    =>  "(/> (call f a))"
+        "x /> f(a) /> g(b)"  =>  "(chain x (/> (call f a)) (/> (call g b)))"
+        "x /> A.f(a,b)"      =>  "(chain x (/> (call (. A (quote f)) a b)))"
+        "/> f(a) /> g(b)"    =>  "(chain (/> (call f a)) (/> (call g b)))"
+        "x /> f() \\> g()"   =>  "(chain x (/> (call f)) (\\> (call g)))"
+        "x /> \$call"        =>  "(chain x (/> (\$ call)))"
+        "x /> notcall[]"     =>  "(chain x (/> (error (ref notcall))))"
+    ],
     JuliaSyntax.parse_range => [
         "1:2"       => "(call-i 1 : 2)"
         "1:2:3"     => "(call-i 1 : 2 3)"

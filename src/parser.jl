@@ -823,26 +823,33 @@ function parse_pipe_gt(ps::ParseState)
     parse_LtoR(ps, parse_curry_chain, is_prec_pipe_gt)
 end
 
-# x /> f(y) /> g(z)  ==>  (chain x (/> f y) (/> g z))
-# x /> A.f(y)        ==>  (chain x (/> (. A (quote f)) y))
 function parse_curry_chain(ps::ParseState)
     mark = position(ps)
     nterms = 0
     if (k = peek(ps); k != K"/>" && k != K"\>")
+        # x /> f(a)  ==>  (chain x (/> (call f a)))
         parse_range(ps)
         nterms += 1
+    else
+        # /> f(a) ==>  (/> (call f a))
     end
     while (k = peek(ps); k == K"/>" || k == K"\>")
-        bump(ps, TRIVIA_FLAG)
         m = position(ps)
+        bump(ps, TRIVIA_FLAG)
         parse_range(ps)
         nterms += 1
-        if peek_behind(ps).kind != K"call"
+        if (kb = peek_behind(ps).kind; kb != K"call" && kb != K"$")
             emit(ps, m, K"error", error="Expected call to the right of />")
         end
         emit(ps, m, k)
     end
     if nterms > 1
+        # x /> f(a) /> g(b)  ==>  (chain x (/> (call f a)) (/> (call g b)))
+        # x /> A.f(a,b)      ==>  (chain x (/> (call (. A (quote f)) a b)))
+        # /> f(a) /> g(b)    ==>  (chain (/> (call f a)) (/> (call g b)))
+        # x /> f() \> g()    ==>  (chain x (/> (call f)) (\> (call g)))
+        # x /> $call         ==>  (chain x (/> ($ call)))
+        # x /> notcall[]     ==>  (chain x (/> (error (ref notcall))))
         emit(ps, mark, K"chain")
     end
 end
