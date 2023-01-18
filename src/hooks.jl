@@ -248,31 +248,33 @@ end
 # FIXME: Improve this in Base somehow?
 Base.Meta.ParseError(e::JuliaSyntax.ParseError) = e
 
-const _default_parser = Core._parse
+if VERSION >= v"1.6.0"
+    const _default_parser = Core._parse
 
-"""
-    enable_in_core!([enable=true; freeze_world_age, debug_filename])
+    """
+        enable_in_core!([enable=true; freeze_world_age, debug_filename])
 
-Connect the JuliaSyntax parser to the Julia runtime so that it replaces the
-flisp parser for all parsing work. That is, JuliaSyntax will be used for
-`include()` `Meta.parse()`, the REPL, etc. To disable, set use
-`enable_in_core!(false)`.
+    Connect the JuliaSyntax parser to the Julia runtime so that it replaces the
+    flisp parser for all parsing work. That is, JuliaSyntax will be used for
+    `include()` `Meta.parse()`, the REPL, etc. To disable, set use
+    `enable_in_core!(false)`.
 
-Keyword arguments:
-* `freeze_world_age` - Use a fixed world age for the parser to prevent
-  recompilation of the parser due to any user-defined methods (default `true`).
-* `debug_filename` - File name of parser debug log (defaults to `nothing` or
-  the value of `ENV["JULIA_SYNTAX_DEBUG_FILE"]`).
-"""
-function enable_in_core!(enable=true; freeze_world_age = true,
-        debug_filename   = get(ENV, "JULIA_SYNTAX_DEBUG_FILE", nothing))
-    _parser_world_age[] = freeze_world_age ? Base.get_world_counter() : _latest_world
-    if enable && !isnothing(debug_filename)
-        _debug_log[] = open(debug_filename, "w")
-    elseif !enable && !isnothing(_debug_log[])
-        close(_debug_log[])
-        _debug_log[] = nothing
+    Keyword arguments:
+    * `freeze_world_age` - Use a fixed world age for the parser to prevent
+    recompilation of the parser due to any user-defined methods (default `true`).
+    * `debug_filename` - File name of parser debug log (defaults to `nothing` or
+    the value of `ENV["JULIA_SYNTAX_DEBUG_FILE"]`).
+    """
+    function enable_in_core!(enable=true; freeze_world_age = true,
+            debug_filename   = get(ENV, "JULIA_SYNTAX_DEBUG_FILE", nothing))
+        _parser_world_age[] = freeze_world_age ? Base.get_world_counter() : _latest_world
+        if enable && !isnothing(debug_filename)
+            _debug_log[] = open(debug_filename, "w")
+        elseif !enable && !isnothing(_debug_log[])
+            close(_debug_log[])
+            _debug_log[] = nothing
+        end
+        _set_core_parse_hook(enable ? core_parser_hook : _default_parser)
+        nothing
     end
-    _set_core_parse_hook(enable ? core_parser_hook : _default_parser)
-    nothing
 end
