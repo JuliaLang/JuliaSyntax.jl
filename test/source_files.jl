@@ -9,4 +9,21 @@
     @test source_location(SourceFile("a\nb\n"), 3) == (2,1)
     @test source_location(SourceFile("a\nb\n"), 4) == (2,2)
     @test source_location(SourceFile("a\nb\n"), 5) == (2,3)
+
+    @test source_location(SourceFile("a"; lineno=7), 1) == (7,1)
+    @test source_location(SourceFile("a"; lineno=7), 2) == (7,2)
+
+    @test source_location(SourceFile("a\n"; lineno=7), 2) == (7,2)
+    @test source_location(SourceFile("a\n"; lineno=7), 3) == (7,3)
+
+    @test source_location(SourceFile("a\nb\n"; lineno=7), 2) == (7,2)
+    @test source_location(SourceFile("a\nb\n"; lineno=7), 3) == (8,1)
+    @test source_location(SourceFile("a\nb\n"; lineno=7), 4) == (8,2)
+    @test source_location(SourceFile("a\nb\n"; lineno=7), 5) == (8,3)
+
+    mktemp() do path, io
+        write(io, "a\n")
+        @test source_location(SourceFile(; filename=path), 1) == (1,1)
+        @test source_location(SourceFile(; filename=path, lineno=7), 1) == (7,1)
+    end
 end
