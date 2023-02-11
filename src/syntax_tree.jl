@@ -1,19 +1,26 @@
 #-------------------------------------------------------------------------------
 # AST interface, built on top of raw tree
 
+mutable struct TreeNode{NodeData}
+    parent::Union{Nothing,TreeNode{NodeData}}
+    children::Union{Nothing,Vector{TreeNode{NodeData}}}
+    data::Union{Nothing,NodeData}
+end
+
+struct SyntaxData
+    source::SourceFile
+    raw::GreenNode{SyntaxHead}
+    position::Int
+    val::Any
+end
+
+const SyntaxNode = TreeNode{SyntaxData}
+
 """
 Design options:
 * rust-analyzer treats their version of an untyped syntax node as a cursor into
   the green tree. They deallocate aggressively.
 """
-mutable struct SyntaxNode
-    source::SourceFile
-    raw::GreenNode{SyntaxHead}
-    position::Int
-    parent::Union{Nothing,SyntaxNode}
-    is_leaf::Bool
-    val::Any
-end
 
 # Value of an error node with no children
 struct ErrorVal
@@ -106,7 +113,7 @@ function SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead}, position::In
             @debug "Leaf node of kind $k unknown to SyntaxNode"
             ErrorVal()
         end
-        return SyntaxNode(source, raw, position, nothing, true, val)
+        return SyntaxNode(nothing, nothing, SyntaxData(source, raw, position, val))
     else
         cs = SyntaxNode[]
         pos = position
@@ -117,7 +124,7 @@ function SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead}, position::In
             end
             pos += rawchild.span
         end
-        node = SyntaxNode(source, raw, position, nothing, false, cs)
+        node = SyntaxNode(nothing, cs, SyntaxData(source, raw, position, nothing))
         for c in cs
             c.parent = node
         end
@@ -125,10 +132,19 @@ function SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead}, position::In
     end
 end
 
-head(node::SyntaxNode) = head(node.raw)
+function Base.getproperty(node::TreeNode, name::Symbol)
+    name === :parent && return getfield(node, :parent)
+    name === :children && return getfield(node, :children)
+    d = getfield(node, :data)
+    name === :data && return d
+    return getproperty(d, name)
+end
 
-haschildren(node::SyntaxNode) = !node.is_leaf
-children(node::SyntaxNode) = haschildren(node) ? node.val::Vector{SyntaxNode} : ()
+haschildren(node::TreeNode) = node.children !== nothing
+children(node::TreeNode) = (c = node.children; return c === nothing ? () : c)
+
+
+head(node::SyntaxNode) = head(node.raw)
 
 span(node::SyntaxNode) = span(node.raw)
 
