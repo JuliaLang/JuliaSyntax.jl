@@ -1,5 +1,5 @@
 """
-    SourceFile(code [; filename=nothing, lineno=1])
+    SourceFile(code [; filename=nothing, first_line=1])
 
 A UTF-8 source code string with associated file name and line number.
 
@@ -13,12 +13,12 @@ struct SourceFile
     # https://en.wikipedia.org/wiki/Rope_(data_structure)
     code::String
     filename::Union{Nothing,String}
-    lineno::Int
+    first_line::Int
     # String index of start of every line
     line_starts::Vector{Int}
 end
 
-function SourceFile(code::AbstractString; filename=nothing, lineno=1)
+function SourceFile(code::AbstractString; filename=nothing, first_line=1)
     line_starts = Int[1]
     for i in eachindex(code)
         # The line is considered to start after the `\n`
@@ -28,7 +28,7 @@ function SourceFile(code::AbstractString; filename=nothing, lineno=1)
     if isempty(code) || last(code) != '\n'
         push!(line_starts, ncodeunits(code)+1)
     end
-    SourceFile(code, filename, lineno, line_starts)
+    SourceFile(code, filename, first_line, line_starts)
 end
 
 function SourceFile(; filename, kwargs...)
@@ -40,7 +40,7 @@ function source_line_index(source::SourceFile, byte_index)
     lineidx = searchsortedlast(source.line_starts, byte_index)
     return (lineidx < lastindex(source.line_starts)) ? lineidx : lineidx-1
 end
-_source_line(source::SourceFile, lineidx) = lineidx + source.lineno - 1
+_source_line(source::SourceFile, lineidx) = lineidx + source.first_line - 1
 source_line(source::SourceFile, byte_index) = _source_line(source, source_line_index(source, byte_index))
 
 """
