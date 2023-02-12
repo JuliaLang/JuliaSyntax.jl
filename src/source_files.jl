@@ -40,7 +40,8 @@ function source_line_index(source::SourceFile, byte_index)
     lineidx = searchsortedlast(source.line_starts, byte_index)
     return (lineidx < lastindex(source.line_starts)) ? lineidx : lineidx-1
 end
-source_line(source::SourceFile, byte_index, lineidx=source_line_index(source, byte_index)) = lineidx + source.lineno - 1
+_source_line(source::SourceFile, lineidx) = lineidx + source.lineno - 1
+source_line(source::SourceFile, byte_index) = _source_line(source, source_line_index(source, byte_index))
 
 """
 Get line number and character within the line at the given byte index.
@@ -53,7 +54,7 @@ function source_location(source::SourceFile, byte_index)
         i = nextind(source.code, i)
         column += 1
     end
-    source_line(source, byte_index, lineidx), column
+    _source_line(source, lineidx), column
 end
 
 """
