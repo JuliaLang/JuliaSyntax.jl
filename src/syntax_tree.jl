@@ -16,12 +16,6 @@ end
 
 const SyntaxNode = TreeNode{SyntaxData}
 
-"""
-Design options:
-* rust-analyzer treats their version of an untyped syntax node as a cursor into
-  the green tree. They deallocate aggressively.
-"""
-
 # Value of an error node with no children
 struct ErrorVal
 end
