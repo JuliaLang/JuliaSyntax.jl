@@ -29,8 +29,9 @@
 
     @test SourceFile("a\nb\n")[1:2] == "a\n"
     @test SourceFile("a\nb\n")[3:end] == "b\n"
-    if Base.VERSION >= v"1.6"
-        @test SourceFile("a\nb\n")[begin:end] == "a\nb\n"
+    if Base.VERSION >= v"1.4"
+        # Protect the `[begin` from being viewed by the parse on older Julia versions
+        @test eval(Meta.parse("""SourceFile("a\nb\n")[begin:end]""")) == "a\nb\n"
     end
 
     # unicode
