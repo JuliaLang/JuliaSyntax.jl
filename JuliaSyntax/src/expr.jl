@@ -46,6 +46,27 @@ function reorder_parameters!(args, params_pos)
     insert!(args, params_pos, pop!(args))
 end
 
+function lower_underscores!(anon_args, args, argrange=1:length(args))
+    for i in argrange
+        a = args[i]
+        if a == :_
+            g = gensym()
+            push!(anon_args, g)
+            args[i] = g
+        elseif a isa Expr
+            if Meta.isexpr(a, :call) && length(a.args) > 2 &&
+                    Meta.isexpr(a.args[2], :parameters)
+                lower_underscores!(anon_args, a.args, 1:1)
+                lower_underscores!(anon_args, a.args, 3:length(a.args))
+                lower_underscores!(anon_args, a.args, 2:2)
+            else
+                # FIXME: Other out-of-source-order Exprs
+                lower_underscores!(anon_args, a.args)
+            end
+        end
+    end
+end
+
 function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
                   eq_to_kw=false, map_kw_in_params=false)
     if !haschildren(node)
@@ -275,11 +296,17 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
         # Block for conditional's source location
         args[1] = Expr(:block, loc, args[1])
     elseif headsym === :(->)
-        if Meta.isexpr(args[2], :block)
-            pushfirst!(args[2].args, loc)
+        if is_prefix_op_call(node)
+            anon_args = Symbol[]
+            lower_underscores!(anon_args, args)
+            pushfirst!(args, Expr(:tuple, anon_args...))
         else
-            # Add block for source locations
-            args[2] = Expr(:block, loc, args[2])
+            if Meta.isexpr(args[2], :block)
+                pushfirst!(args[2].args, loc)
+            else
+                # Add block for source locations
+                args[2] = Expr(:block, loc, args[2])
+            end
         end
     elseif headsym === :function
         if length(args) > 1
