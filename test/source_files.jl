@@ -26,4 +26,13 @@
         @test source_location(SourceFile(; filename=path), 1) == (1,1)
         @test source_location(SourceFile(; filename=path, first_line=7), 1) == (7,1)
     end
+
+    @test SourceFile("a\nb\n")[1:2] == "a\n"
+    @test SourceFile("a\nb\n")[3:end] == "b\n"
+    if Base.VERSION >= v"1.6"
+        @test SourceFile("a\nb\n")[begin:end] == "a\nb\n"
+    end
+
+    # unicode
+    @test SourceFile("αβ")[1:2] == "α"
 end
