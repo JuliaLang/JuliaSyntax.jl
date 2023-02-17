@@ -1,13 +1,17 @@
 #-------------------------------------------------------------------------------
 # AST interface, built on top of raw tree
 
-mutable struct TreeNode{NodeData}
+abstract type AbstractSyntaxData end
+
+mutable struct TreeNode{NodeData}   # ? prevent others from using this with NodeData <: AbstractSyntaxData?
     parent::Union{Nothing,TreeNode{NodeData}}
     children::Union{Nothing,Vector{TreeNode{NodeData}}}
     data::Union{Nothing,NodeData}
 end
 
-struct SyntaxData
+const AbstractSyntaxNode = TreeNode{<:AbstractSyntaxData}
+
+struct SyntaxData <: AbstractSyntaxData
     source::SourceFile
     raw::GreenNode{SyntaxHead}
     position::Int
@@ -142,15 +146,15 @@ head(node::SyntaxNode) = head(node.raw)
 
 span(node::SyntaxNode) = span(node.raw)
 
-first_byte(node::SyntaxNode) = node.position
-last_byte(node::SyntaxNode)  = node.position + span(node) - 1
+first_byte(node::AbstractSyntaxNode) = node.position
+last_byte(node::AbstractSyntaxNode)  = node.position + span(node) - 1
 
 """
     sourcetext(node)
 
 Get the full source text of a node.
 """
-function sourcetext(node::SyntaxNode)
+function sourcetext(node::AbstractSyntaxNode)
     val_range = (node.position-1) .+ (1:span(node))
     view(node.source, val_range)
 end
@@ -160,7 +164,7 @@ function interpolate_literal(node::SyntaxNode, val)
     SyntaxNode(node.source, node.raw, node.position, node.parent, true, val)
 end
 
-function _show_syntax_node(io, current_filename, node::SyntaxNode, indent)
+function _show_syntax_node(io, current_filename, node::AbstractSyntaxNode, indent)
     fname = node.source.filename
     line, col = source_location(node.source, node.position)
     posstr = "$(lpad(line, 4)):$(rpad(col,3))│$(lpad(first_byte(node),6)):$(rpad(last_byte(node),6))│"
@@ -183,7 +187,7 @@ function _show_syntax_node(io, current_filename, node::SyntaxNode, indent)
     end
 end
 
-function _show_syntax_node_sexpr(io, node::SyntaxNode)
+function _show_syntax_node_sexpr(io, node::AbstractSyntaxNode)
     if !haschildren(node)
         if is_error(node)
             print(io, "(", untokenize(head(node)), ")")
@@ -203,24 +207,24 @@ function _show_syntax_node_sexpr(io, node::SyntaxNode)
     end
 end
 
-function Base.show(io::IO, ::MIME"text/plain", node::SyntaxNode)
+function Base.show(io::IO, ::MIME"text/plain", node::AbstractSyntaxNode)
     println(io, "line:col│ byte_range  │ tree                                   │ file_name")
     _show_syntax_node(io, Ref{Union{Nothing,String}}(nothing), node, "")
 end
 
-function Base.show(io::IO, ::MIME"text/x.sexpression", node::SyntaxNode)
+function Base.show(io::IO, ::MIME"text/x.sexpression", node::AbstractSyntaxNode)
     _show_syntax_node_sexpr(io, node)
 end
 
-function Base.show(io::IO, node::SyntaxNode)
+function Base.show(io::IO, node::AbstractSyntaxNode)
     _show_syntax_node_sexpr(io, node)
 end
 
-function Base.push!(node::SyntaxNode, child::SyntaxNode)
+function Base.push!(node::SN, child::SN) where SN<:AbstractSyntaxNode
     if !haschildren(node)
         error("Cannot add children")
     end
-    args = node.val::Vector{SyntaxNode}
+    args = children(node)
     push!(args, child)
 end
 
@@ -249,7 +253,7 @@ end
 
 function setchild!(node::SyntaxNode, path, x)
     n1 = child(node, path[1:end-1]...)
-    n1.val[path[end]] = x
+    n1.children[path[end]] = x
 end
 
 # We can overload multidimensional Base.getindex / Base.setindex! for node
