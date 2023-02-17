@@ -276,7 +276,7 @@ function is_syntactic_operator(k)
 end
 
 function is_syntactic_unary_op(k)
-    kind(k) in KSet"$ & ::"
+    kind(k) in KSet"$ & :: ->"
 end
 
 function is_type_operator(t)
@@ -1417,6 +1417,7 @@ end
 # &a   ==>  (& a)
 # ::a  ==>  (::-pre a)
 # $a   ==>  ($ a)
+# ->a  ==>  (-> a)
 #
 # flisp: parse-unary-prefix
 function parse_unary_prefix(ps::ParseState)
@@ -1434,14 +1435,16 @@ function parse_unary_prefix(ps::ParseState)
             if k in KSet"& ::"
                 # &a   ==>  (& a)
                 parse_where(ps, parse_call)
+            elseif k == K"->"
+                # -> binds loosely on the right
+                parse_eq_star(ps)
             else
                 # $a   ==>  ($ a)
                 # $$a  ==>  ($ ($ a))
                 # $&a  ==>  ($ (& a))
                 parse_unary_prefix(ps)
             end
-            # Only need PREFIX_OP_FLAG for ::
-            f = k == K"::" ? PREFIX_OP_FLAG : EMPTY_FLAGS
+            f = (k == K"::" || k == K"->") ? PREFIX_OP_FLAG : EMPTY_FLAGS
             emit(ps, mark, k, f)
         end
     else
