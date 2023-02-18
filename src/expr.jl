@@ -34,8 +34,12 @@ function lower_underscores!(anon_args, args, argrange=1:length(args))
     for i in argrange
         a = args[i]
         if a == :_
-            g = gensym()
-            push!(anon_args, g)
+            if isempty(anon_args)
+                g = gensym()
+                push!(anon_args, g)
+            else
+                g = anon_args[1]
+            end
             args[i] = g
         elseif a isa Expr
             if Meta.isexpr(a, :call) && length(a.args) > 2 &&
