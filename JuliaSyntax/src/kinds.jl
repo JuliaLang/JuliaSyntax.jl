@@ -824,7 +824,7 @@ const _kind_names =
     ".'"
     "->"
     "/>"
-    "\\>"
+    "/>>"
 
     "BEGIN_UNICODE_OPS"
         "¬"

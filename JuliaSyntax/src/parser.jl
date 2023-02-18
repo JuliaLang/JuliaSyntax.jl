@@ -826,14 +826,14 @@ end
 function parse_curry_chain(ps::ParseState)
     mark = position(ps)
     nterms = 0
-    if (k = peek(ps); k != K"/>" && k != K"\>")
+    if (k = peek(ps); k != K"/>" && k != K"/>>")
         # x /> f(a)  ==>  (chain x (/> (call f a)))
         parse_range(ps)
         nterms += 1
     else
         # /> f(a) ==>  (/> (call f a))
     end
-    while (k = peek(ps); k == K"/>" || k == K"\>")
+    while (k = peek(ps); k == K"/>" || k == K"/>>")
         m = position(ps)
         bump(ps, TRIVIA_FLAG)
         parse_range(ps)
@@ -847,7 +847,7 @@ function parse_curry_chain(ps::ParseState)
         # x /> f(a) /> g(b)  ==>  (chain x (/> (call f a)) (/> (call g b)))
         # x /> A.f(a,b)      ==>  (chain x (/> (call (. A (quote f)) a b)))
         # /> f(a) /> g(b)    ==>  (chain (/> (call f a)) (/> (call g b)))
-        # x /> f() \> g()    ==>  (chain x (/> (call f)) (\> (call g)))
+        # x /> f() />> g()    ==>  (chain x (/> (call f)) (/>> (call g)))
         # x /> $call         ==>  (chain x (/> ($ call)))
         # x /> notcall[]     ==>  (chain x (/> (error (ref notcall))))
         emit(ps, mark, K"chain")

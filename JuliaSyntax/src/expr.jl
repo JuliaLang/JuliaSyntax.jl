@@ -326,7 +326,7 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
             args[1] = Expr(headsym, args[1].args...)
             headsym = :const
         end
-    elseif headsym == Symbol("/>") || headsym == Symbol("\\>")
+    elseif headsym == Symbol("/>") || headsym == Symbol("/>>")
         callex = only(args)
         @assert Meta.isexpr(callex, :call)
         args = callex.args
@@ -364,7 +364,7 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
             return Expr(:call, func, args...)
         end
     elseif headsym == :chain
-        if kind(node_args[1]) in KSet"/> \>"
+        if kind(node_args[1]) in KSet"/> />>"
             return Expr(:call, :(JuliaSyntax.compose_chain), args...)
         else
             return Expr(:call, :(JuliaSyntax.chain), args...)
@@ -374,7 +374,7 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
 end
 
 #-------------------------------------------------------------------------------
-# Targets for lowering /> and \> syntax
+# Targets for lowering /> and />> syntax
 
 # For use with />
 struct FixButFirst{F,Args,Kws}
@@ -390,7 +390,7 @@ Fix all arguments except for the first
 """
 fixbutfirst(f, args...; kws...) = FixButFirst(f, args, kws)
 
-# For use with \>
+# For use with />>
 struct FixButLast{F,Args,Kws}
     f::F
     args::Args
@@ -408,7 +408,7 @@ chain(x, f, fs...) = chain(f(x), fs...)
 chain(x) = x
 
 # An example of how chain() can be used to rewrite
-# `x \> map(f) \> reduce(g)` into `mapreduce(f, g, x)`
+# `x />> map(f) />> reduce(g)` into `mapreduce(f, g, x)`
 function chain(x, f1::FixButLast{typeof(map)}, f2::FixButLast{typeof(reduce)}, fs...)
     chain(x, fixbutlast(mapreduce, f1.args..., f2.args...; f1.kwargs..., f2.kwargs...), fs...)
 end
