@@ -11,22 +11,6 @@ function is_stringchunk(node)
     return k == K"String" || k == K"CmdString"
 end
 
-function lower_underscores(args, skiparg=-1)
-    g = nothing
-    for i in 1:length(args)
-        if i == skiparg
-            continue
-        end
-        if args[i] == :_
-            if isnothing(g)
-                g = gensym()
-            end
-            args[i] = g
-        end
-    end
-    return g
-end
-
 function reorder_parameters!(args, params_pos)
     p = 0
     for i = length(args):-1:1
@@ -206,7 +190,6 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
             headsym = Symbol("'")
         end
         # Move parameters blocks to args[2]
-        g = lower_underscores(args, 1)
         reorder_parameters!(args, 2)
         if headsym === :dotcall
             if is_prefix_call(node)
@@ -217,17 +200,9 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
                 args[1] = Symbol(".", args[1])
             end
         end
-        if !isnothing(g)
-            return Expr(:->, g, Expr(:call, args...))
-        end
     elseif headsym in (:ref, :curly)
         # Move parameters blocks to args[2]
         reorder_parameters!(args, 2)
-    elseif headsym == :.
-        g = lower_underscores(args)
-        if !isnothing(g)
-            return Expr(:->, g, Expr(:., args...))
-        end
     elseif headsym in (:tuple, :vect, :braces)
         # Move parameters blocks to args[1]
         reorder_parameters!(args, 1)
@@ -352,13 +327,37 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
             headsym = :const
         end
     elseif headsym == Symbol("/>") || headsym == Symbol("\\>")
-        freearg = gensym()
         callex = only(args)
         @assert Meta.isexpr(callex, :call)
         args = callex.args
         func = headsym == Symbol("/>") ?
             :(JuliaSyntax.fixbutfirst) :
             :(JuliaSyntax.fixbutlast)
+
+        # Automatic underscore lowering within pipes
+        for i = 2:length(args)
+            anon_args = Symbol[]
+            if i == 2 && Meta.isexpr(args[i], :parameters)
+                kws = args[i].args
+                for j = 1:length(kws)
+                    kw = kws[j]
+                    if Meta.isexpr(kw, :kw)
+                        as = Any[kw.args[2]]
+                        lower_underscores!(anon_args, as)
+                        if !isempty(anon_args)
+                            kw.args[2] = Expr(:->, Expr(:tuple, anon_args...), as[1])
+                        end
+                    end
+                end
+            else
+                as = Any[args[i]]
+                lower_underscores!(anon_args, as)
+                if !isempty(anon_args)
+                    args[i] = Expr(:->, Expr(:tuple, anon_args...), as[1])
+                end
+            end
+        end
+
         if length(args) >= 2 && Meta.isexpr(args[2], :parameters)
             return Expr(:call, func, args[2], args[1], args[3:end]...)
         else
