@@ -27,6 +27,11 @@
     @test sprint(JuliaSyntax.highlight, tt, t, 1, 3) == "a*\e[48;2;40;40;70mb\e[0;0m + c"
     @test sprint(JuliaSyntax.highlight, tt, t.raw, 5) == "a*b + \e[48;2;40;40;70mc\e[0;0m"
 
+    # Pass-through field access
+    node = child(t, 1, 1)
+    @test node.val === :a
+    @test_throws ErrorException("setfield!: immutable struct of type SyntaxData cannot be changed") node.val = :q
+
     node = parse(SyntaxNode, "f()")
     push!(node, parse(SyntaxNode, "x"))
     @test length(children(node)) == 2

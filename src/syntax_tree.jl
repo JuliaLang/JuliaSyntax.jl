@@ -9,6 +9,24 @@ mutable struct TreeNode{NodeData}   # ? prevent others from using this with Node
     data::Union{Nothing,NodeData}
 end
 
+# Implement "pass-through" semantics for field access: access fields of `data`
+# as if they were part of `TreeNode`
+function Base.getproperty(node::TreeNode, name::Symbol)
+    name === :parent && return getfield(node, :parent)
+    name === :children && return getfield(node, :children)
+    d = getfield(node, :data)
+    name === :data && return d
+    return getproperty(d, name)
+end
+
+function Base.setproperty!(node::TreeNode, name::Symbol, x)
+    name === :parent && return setfield!(node, :parent, x)
+    name === :children && return setfield!(node, :children, x)
+    name === :data && return setfield!(node, :data, x)
+    d = getfield(node, :data)
+    return setfield!(d, name, x)
+end
+
 const AbstractSyntaxNode = TreeNode{<:AbstractSyntaxData}
 
 struct SyntaxData <: AbstractSyntaxData
@@ -128,14 +146,6 @@ function SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead}, position::In
         end
         return node
     end
-end
-
-function Base.getproperty(node::TreeNode, name::Symbol)
-    name === :parent && return getfield(node, :parent)
-    name === :children && return getfield(node, :children)
-    d = getfield(node, :data)
-    name === :data && return d
-    return getproperty(d, name)
 end
 
 haschildren(node::TreeNode) = node.children !== nothing
