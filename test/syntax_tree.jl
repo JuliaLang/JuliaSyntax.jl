@@ -30,7 +30,9 @@
     # Pass-through field access
     node = child(t, 1, 1)
     @test node.val === :a
-    @test_throws ErrorException("setfield!: immutable struct of type SyntaxData cannot be changed") node.val = :q
+    # The specific error text has evolved over Julia versions. Check that it involves `SyntaxData` and immutability
+    e = try node.val = :q catch e e end
+    @test occursin("immutable", e.msg) && occursin("SyntaxData", e.msg)
 
     node = parse(SyntaxNode, "f()")
     push!(node, parse(SyntaxNode, "x"))
