@@ -245,7 +245,7 @@ function Base.push!(node::SN, child::SN) where SN<:AbstractSyntaxNode
 end
 
 function Base.copy(node::TreeNode)
-    # copy is deep in the tree, shallow in the data
+    # copy the container but not the data (ie, deep copy the tree, shallow copy the data). copy(::Expr) is similar
     # copy "un-parents" the top-level `node` that you're copying
     newnode = typeof(node)(nothing, haschildren(node) ? typeof(node)[] : nothing, copy(node.data))
     for child in children(node)
