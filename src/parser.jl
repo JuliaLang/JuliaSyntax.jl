@@ -276,7 +276,7 @@ function is_syntactic_operator(k)
 end
 
 function is_syntactic_unary_op(k)
-    kind(k) in KSet"$ & ::"
+    kind(k) in KSet"$ & :: ->"
 end
 
 function is_type_operator(t)
@@ -820,7 +820,38 @@ end
 # x .|> y      ==>  (dotcall-i x |> y)
 # flisp: parse-pipe>
 function parse_pipe_gt(ps::ParseState)
-    parse_LtoR(ps, parse_range, is_prec_pipe_gt)
+    parse_LtoR(ps, parse_curry_chain, is_prec_pipe_gt)
+end
+
+function parse_curry_chain(ps::ParseState)
+    mark = position(ps)
+    nterms = 0
+    if (k = peek(ps); k != K"/>" && k != K"/>>")
+        # x /> f(a)  ==>  (chain x (/> (call f a)))
+        parse_range(ps)
+        nterms += 1
+    else
+        # /> f(a) ==>  (/> (call f a))
+    end
+    while (k = peek(ps); k == K"/>" || k == K"/>>")
+        m = position(ps)
+        bump(ps, TRIVIA_FLAG)
+        parse_range(ps)
+        nterms += 1
+        if (kb = peek_behind(ps).kind; kb != K"call" && kb != K"$")
+            emit(ps, m, K"error", error="Expected call to the right of />")
+        end
+        emit(ps, m, k)
+    end
+    if nterms > 1
+        # x /> f(a) /> g(b)  ==>  (chain x (/> (call f a)) (/> (call g b)))
+        # x /> A.f(a,b)      ==>  (chain x (/> (call (. A (quote f)) a b)))
+        # /> f(a) /> g(b)    ==>  (chain (/> (call f a)) (/> (call g b)))
+        # x /> f() />> g()    ==>  (chain x (/> (call f)) (/>> (call g)))
+        # x /> $call         ==>  (chain x (/> ($ call)))
+        # x /> notcall[]     ==>  (chain x (/> (error (ref notcall))))
+        emit(ps, mark, K"chain")
+    end
 end
 
 # parse ranges and postfix ...
@@ -1417,6 +1448,7 @@ end
 # &a   ==>  (& a)
 # ::a  ==>  (::-pre a)
 # $a   ==>  ($ a)
+# ->a  ==>  (-> a)
 #
 # flisp: parse-unary-prefix
 function parse_unary_prefix(ps::ParseState)
@@ -1434,14 +1466,16 @@ function parse_unary_prefix(ps::ParseState)
             if k in KSet"& ::"
                 # &a   ==>  (& a)
                 parse_where(ps, parse_call)
+            elseif k == K"->"
+                # -> binds loosely on the right
+                parse_eq_star(ps)
             else
                 # $a   ==>  ($ a)
                 # $$a  ==>  ($ ($ a))
                 # $&a  ==>  ($ (& a))
                 parse_unary_prefix(ps)
             end
-            # Only need PREFIX_OP_FLAG for ::
-            f = k == K"::" ? PREFIX_OP_FLAG : EMPTY_FLAGS
+            f = (k == K"::" || k == K"->") ? PREFIX_OP_FLAG : EMPTY_FLAGS
             emit(ps, mark, k, f)
         end
     else
