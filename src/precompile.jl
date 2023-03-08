@@ -1,5 +1,6 @@
 # Just parse some file as a precompile workload
-filename = joinpath(@__DIR__, "literal_parsing.jl")
-text = read(filename, String)
-stream = JuliaSyntax.ParseStream(text)
-JuliaSyntax.parse!(stream)
+let filename = joinpath(@__DIR__, "literal_parsing.jl")
+    text = read(filename, String)
+    stream = JuliaSyntax.ParseStream(text)
+    JuliaSyntax.parse!(stream)
+end
