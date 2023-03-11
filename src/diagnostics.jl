@@ -46,7 +46,7 @@ Base.range(d::Diagnostic) = first_byte(d):last_byte(d)
 function _file_url(filename)
     @static if Sys.iswindows()
         # TODO: Test this with windows terminal
-        path = join(splitpath(abspath(filename)), '/')
+        path = replace(abspath(filename), '\\'=>'/')
     else
         path = abspath(filename)
     end
