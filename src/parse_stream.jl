@@ -295,8 +295,8 @@ function Base.show(io::IO, mime::MIME"text/plain", stream::ParseStream)
     println(io, "ParseStream at position $(_next_byte(stream))")
 end
 
-function show_diagnostics(io::IO, stream::ParseStream, code)
-    show_diagnostics(io, stream.diagnostics, code)
+function show_diagnostics(io::IO, stream::ParseStream)
+    show_diagnostics(io, stream.diagnostics, sourcetext(stream))
 end
 
 # We manage a pool of stream positions as parser working space

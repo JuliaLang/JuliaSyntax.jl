@@ -113,16 +113,22 @@ end
     @test sprint(io->highlight(io, src, 8:13;
                                context_lines_before=0,
                                context_lines_after=0)) == """
-    αβγδ
-    #└─┘"""
+        αβγδ
+        #└─┘"""
     @test sprint(io->highlight(io, src, 8:13; context_lines_after=0)) == """
-    abcd
-    αβγδ
-    #└─┘"""
+        abcd
+        αβγδ
+        #└─┘"""
     @test sprint(io->highlight(io, src, 8:13; context_lines_before=0)) == """
-    αβγδ
-    #└─┘
-    +-*/"""
+        αβγδ
+        #└─┘
+        +-*/"""
+    @test sprint(io->highlight(io, src, 1:18; context_lines_inner=0)) == """
+        ┌───
+        abcd
+        ⋮
+        +-*/
+        #──┘"""
 
     # annotations
     @test sprint(io->highlight(io, src, 8:13; note="hello")) == """
@@ -136,6 +142,13 @@ end
         αβγδ
         #──┘ ── hello
         +-*/"""
+    @test sprint(io->highlight(io, src, 8:13;
+                               note=(io,indent,w)->print(io, "\n$indent$('!'^w) hello"))) == """
+        abcd
+        αβγδ
+        #└─┘
+        #!!! hello
+        +-*/"""
 
     # colored output
     @test sprint(io->highlight(io, src, 8:13; context_lines_after=0, note="hello", notecolor=:light_red),
@@ -144,4 +157,7 @@ end
     @test sprint(io->highlight(io, src, 1:13; context_lines_after=0, note="hello", notecolor=(255,0,0)),
                  context=:color=>true) ==
         "\e[90m┌───\e[0;0m\n\e[48;2;120;70;70mabcd\e[0;0m\n\e[48;2;120;70;70mαβγδ\e[0;0m\n\e[90m#──┘ ── \e[0;0m\e[38;2;255;0;0mhello\e[0;0m"
+    @test sprint(io->highlight(io, src, 1:18, context_lines_inner=0),
+                 context=:color=>true) ==
+        "\e[90m┌───\e[0;0m\n\e[48;2;120;70;70mabcd\e[0;0m\n\e[48;2;120;70;70m\e[0;0m⋮\n\e[48;2;120;70;70m+-*/\e[0;0m\n\e[90m#──┘\e[0;0m"
 end

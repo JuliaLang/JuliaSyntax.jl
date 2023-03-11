@@ -124,18 +124,6 @@ end
 
 #-------------------------------------------------------------------------------
 # Tools for highlighting source ranges
-
-function _printnote(io, indent, w, note::AbstractString, notecolor)
-    if isnothing(notecolor)
-        print(io, note)
-    else
-        _printstyled(io, note, fgcolor=notecolor)
-    end
-end
-function _printnote(io, indent, w, note::Function, notecolor)
-    note(io, indent, w)
-end
-
 function _print_marker_line(io, prefix_str, str, underline, singleline, color,
                             note, notecolor)
     # Whitespace equivalent in length to `prefix_str`
@@ -167,12 +155,16 @@ function _print_marker_line(io, prefix_str, str, underline, singleline, color,
                      string(indent, s, repeat('─', w-1), e)
         end
     end
-    if !isnothing(note)
+    if note isa AbstractString
         markline *= " ── "
     end
     _printstyled(io, markline; fgcolor=color)
     if !isnothing(note)
-        _printnote(io, indent, w, note, notecolor)
+        if note isa AbstractString
+            _printstyled(io, note, fgcolor=notecolor)
+        else
+            note(io, indent, w)
+        end
     end
 end
 
@@ -181,18 +173,19 @@ Print the lines of source code surrounding the given byte `range`, which is
 highlighted with background `color` and markers in the text.
 """
 function highlight(io::IO, source::SourceFile, range::UnitRange;
-                   color=(120,70,70), context_inner_lines=1, context_lines_before=2,
-                   context_lines_after=2, note=nothing, notecolor=nothing)
+                   color=(120,70,70), context_lines_before=2,
+                   context_lines_inner=1, context_lines_after=2,
+                   note=nothing, notecolor=nothing)
     p = first(range)
     q = last(range)
 
     x,y = source_line_range(source, p;
                             context_lines_before=context_lines_before,
-                            context_lines_after=context_inner_lines)
+                            context_lines_after=context_lines_inner)
     a,b = source_line_range(source, p)
     c,d = source_line_range(source, q)
     z,w = source_line_range(source, q;
-                            context_lines_before=context_inner_lines,
+                            context_lines_before=context_lines_inner,
                             context_lines_after=context_lines_after)
 
     p_line = source_line(source, p)
@@ -228,7 +221,7 @@ function highlight(io::IO, source::SourceFile, range::UnitRange;
         _print_marker_line(io, prefix1, source[p:b], false, false, marker_line_color, nothing, notecolor)
         print(io, '\n')
         print(io, prefix1)
-        if q_line - p_line - 1 <= 2*context_inner_lines
+        if q_line - p_line - 1 <= 2*context_lines_inner
             # The diagnostic range is compact and we show the whole thing
             _printstyled(io, source[p:q]; bgcolor=color)
         else
