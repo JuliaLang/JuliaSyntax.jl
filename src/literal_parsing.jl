@@ -353,6 +353,5 @@ end
 
 function normalize_identifier(str)
     flags = Base.Unicode.UTF8PROC_STABLE | Base.Unicode.UTF8PROC_COMPOSE
-    isascii(str) || return utf8proc_map(str, flags)
-    return str
+    return isascii(str) ? str : utf8proc_map(str, flags)
 end
