@@ -918,11 +918,15 @@ function validate_tokens(stream::ParseStream)
                 error_kind = K"ErrorInvalidEscapeSequence"
             else
                 seek(charbuf,0)
-                read(charbuf, Char)
-                if !eof(charbuf)
-                    error_kind = K"ErrorOverLongCharacter"
-                    emit_diagnostic(stream, fbyte:lbyte,
-                                    error="character literal contains multiple characters")
+                if eof(charbuf)
+                    error_kind = K"ErrorInvalidEscapeSequence" # for example "'\\"
+                else
+                    read(charbuf, Char)
+                    if !eof(charbuf)
+                        error_kind = K"ErrorOverLongCharacter"
+                        emit_diagnostic(stream, fbyte:lbyte,
+                                        error="character literal contains multiple characters")
+                    end
                 end
             end
         elseif k == K"String" && !has_flags(t, RAW_STRING_FLAG)
