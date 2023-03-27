@@ -138,4 +138,10 @@ tokensplit(str) = [kind(tok) => untokenize(tok, str) for tok in tokenize(str)]
     ]
 
     @test kind(JuliaSyntax.Token()) == K"None"
+
+    @test tokensplit("'\\") == [
+        K"'" => "'",
+        K"ErrorInvalidEscapeSequence" => "\\",
+        K"error" => ""
+    ]
 end
