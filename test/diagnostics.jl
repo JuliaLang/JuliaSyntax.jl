@@ -40,8 +40,8 @@ end
     @test diagnostic("x = '\\k'") ==
         Diagnostic(6, 7, :error, "invalid escape sequence")
     @test diagnostic("'\\", allow_multiple=true) == [
-        Diagnostic(2, 2, :error, "invalid escape sequence"),
-        Diagnostic(3, 2, :error, "unterminated character literal")
+        Diagnostic(3, 2, :error, "unterminated character literal"),
+        Diagnostic(2, 2, :error, "invalid escape sequence")
     ]
 
     # String
