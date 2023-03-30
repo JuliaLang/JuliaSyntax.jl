@@ -100,19 +100,22 @@ function _parse(rule::Symbol, need_eof::Bool, ::Type{T}, text, index=1; version=
 end
 
 _parse_docs = """
-    parse(TreeType, text, [index];
-          version=VERSION,
-          ignore_trivia=true,
-          filename=nothing,
-          ignore_errors=false,
-          ignore_warnings=ignore_errors)
+    # Parse a single expression/statement
+    parsex(TreeType, text, [index];
+           version=VERSION,
+           ignore_trivia=true,
+           filename=nothing,
+           ignore_errors=false,
+           ignore_warnings=ignore_errors)
 
-    # Or, with the same arguments
+    # Parse all statements at top level (file scope)
     parseall(...)
+
+    # Parse a single syntax atom
     parseatom(...)
 
 Parse Julia source code string `text` into a data structure of type `TreeType`.
-`parse` parses a single Julia statement, `parseall` parses top level statements
+`parsex` parses a single Julia statement, `parseall` parses top level statements
 at file scope and `parseatom` parses a single Julia identifier or other "syntax
 atom".
 
@@ -136,15 +139,16 @@ parsing. To avoid exceptions due to warnings, use `ignore_warnings=true`. To
 also avoid exceptions due to errors, use `ignore_errors=true`.
 """
 
-parse(::Type{T}, text::AbstractString; kws...) where {T} = _parse(:statement, true, T, text; kws...)[1]
+"$_parse_docs"
+parsex(::Type{T}, text::AbstractString; kws...) where {T} = _parse(:statement, true, T, text; kws...)[1]
+
+"$_parse_docs"
 parseall(::Type{T}, text::AbstractString; kws...) where {T} = _parse(:toplevel, true, T, text; kws...)[1]
+
+"$_parse_docs"
 parseatom(::Type{T}, text::AbstractString; kws...) where {T} = _parse(:atom, true, T, text; kws...)[1]
 
-@eval @doc $_parse_docs parse
-@eval @doc $_parse_docs parseall
-@eval @doc $_parse_docs parseatom
-
-parse(::Type{T}, text::AbstractString, index::Integer; kws...) where {T} = _parse(:statement, false, T, text, index; kws...)
+parsex(::Type{T}, text::AbstractString, index::Integer; kws...) where {T} = _parse(:statement, false, T, text, index; kws...)
 parseall(::Type{T}, text::AbstractString, index::Integer; kws...) where {T} = _parse(:toplevel, false, T, text, index; kws...)
 parseatom(::Type{T}, text::AbstractString, index::Integer; kws...) where {T} = _parse(:atom, false, T, text, index; kws...)
 

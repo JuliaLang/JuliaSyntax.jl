@@ -30,5 +30,5 @@ b_Expr        = @benchmark JuliaSyntax.parseall(Expr, all_base_code)
 # Allocs.clear()
 # stream = JuliaSyntax.ParseStream(text);
 # JuliaSyntax.peek(stream);
-# Allocs.@profile sample_rate=1 JuliaSyntax.parse(stream)
+# Allocs.@profile sample_rate=1 JuliaSyntax.parsex(stream)
 # PProf.Allocs.pprof()

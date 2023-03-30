@@ -1,7 +1,7 @@
 @testset "SyntaxNode" begin
     # Child access
     tt = "a*b + c"
-    t = parse(SyntaxNode, tt)
+    t = parsex(SyntaxNode, tt)
 
     @test sourcetext(child(t, 1))    == "a*b"
     @test sourcetext(child(t, 1, 1)) == "a"
@@ -37,22 +37,22 @@
     @test occursin("immutable", e.msg) && occursin("SyntaxData", e.msg)
 
     # copy
-    t = parse(SyntaxNode, "a*b + c")
+    t = parsex(SyntaxNode, "a*b + c")
     ct = copy(t)
     ct.data = nothing
     @test ct.data === nothing && t.data !== nothing
     @test child(ct, 1).parent === ct
     @test child(ct, 1) !== child(t, 1)
 
-    node = parse(SyntaxNode, "f()")
-    push!(node, parse(SyntaxNode, "x"))
+    node = parsex(SyntaxNode, "f()")
+    push!(node, parsex(SyntaxNode, "x"))
     @test length(children(node)) == 2
-    node[2] = parse(SyntaxNode, "y")
+    node[2] = parsex(SyntaxNode, "y")
     @test sourcetext(child(node, 2)) == "y"
 end
 
 @testset "SyntaxNode pretty printing" begin
-    t = parse(SyntaxNode, "f(a*b,\n  c)", filename="foo.jl")
+    t = parsex(SyntaxNode, "f(a*b,\n  c)", filename="foo.jl")
     @test sprint(show, MIME("text/plain"), t) == """
     line:col│ tree                                   │ file_name
        1:1  │[call]                                  │foo.jl
