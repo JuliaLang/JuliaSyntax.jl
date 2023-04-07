@@ -41,6 +41,10 @@ structures may be extracted from `stream` with the [`build_tree`](@ref) function
   parenthesized expression.
 """
 function parse!(stream::ParseStream; rule::Symbol=:all)
+    if rule == :toplevel
+        Base.depwarn("Use of rule == :toplevel in parse!() is deprecated. use `rule=:all` instead.", :parse!)
+        rule = :all
+    end
     ps = ParseState(stream)
     if rule === :all
         parse_toplevel(ps)
@@ -202,3 +206,5 @@ end
 function untokenize(token::Token, text::Vector{UInt8})
     text[token.range]
 end
+
+@deprecate parse parsestmt
