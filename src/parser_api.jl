@@ -28,21 +28,21 @@ Base.display_error(io::IO, err::ParseError, bt) = Base.showerror(io, err, bt)
 
 
 """
-    parse!(stream::ParseStream; rule=:toplevel)
+    parse!(stream::ParseStream; rule=:all)
 
 Parse Julia source code from a [`ParseStream`](@ref) object. Output tree data
 structures may be extracted from `stream` with the [`build_tree`](@ref) function.
 
 `rule` may be any of
-* `:toplevel` (default) — parse a whole "file" of top level statements. In this
+* `:all` (default) — parse a whole "file" of top level statements. In this
   mode, the parser expects to fully consume the input.
 * `:statement` — parse a single statement, or statements separated by semicolons.
 * `:atom` — parse a single syntax "atom": a literal, identifier, or
   parenthesized expression.
 """
-function parse!(stream::ParseStream; rule::Symbol=:toplevel)
+function parse!(stream::ParseStream; rule::Symbol=:all)
     ps = ParseState(stream)
-    if rule === :toplevel
+    if rule === :all
         parse_toplevel(ps)
     elseif rule === :statement
         parse_stmts(ps)
@@ -56,14 +56,14 @@ function parse!(stream::ParseStream; rule::Symbol=:toplevel)
 end
 
 """
-    parse!(TreeType, io::IO; rule=:toplevel, version=VERSION)
+    parse!(TreeType, io::IO; rule=:all, version=VERSION)
 
 Parse Julia source code from a seekable `IO` object. The output is a tuple
 `(tree, diagnostics)`. When `parse!` returns, the stream `io` is positioned
 directly after the last byte which was consumed during parsing.
 """
 function parse!(::Type{TreeType}, io::IO;
-                rule::Symbol=:toplevel, version=VERSION, kws...) where {TreeType}
+                rule::Symbol=:all, version=VERSION, kws...) where {TreeType}
     stream = ParseStream(io; version=version)
     parse!(stream; rule=rule)
     tree = build_tree(TreeType, stream; kws...)
@@ -75,7 +75,7 @@ function _parse(rule::Symbol, need_eof::Bool, ::Type{T}, text, index=1; version=
                 ignore_trivia=true, filename=nothing, first_line=1, ignore_errors=false,
                 ignore_warnings=ignore_errors) where {T}
     stream = ParseStream(text, index; version=version)
-    if ignore_trivia && rule != :toplevel
+    if ignore_trivia && rule != :all
         bump_trivia(stream, skip_newlines=true)
         empty!(stream)
     end
@@ -101,12 +101,12 @@ end
 
 _parse_docs = """
     # Parse a single expression/statement
-    parsex(TreeType, text, [index];
-           version=VERSION,
-           ignore_trivia=true,
-           filename=nothing,
-           ignore_errors=false,
-           ignore_warnings=ignore_errors)
+    parsestmt(TreeType, text, [index];
+              version=VERSION,
+              ignore_trivia=true,
+              filename=nothing,
+              ignore_errors=false,
+              ignore_warnings=ignore_errors)
 
     # Parse all statements at top level (file scope)
     parseall(...)
@@ -115,7 +115,7 @@ _parse_docs = """
     parseatom(...)
 
 Parse Julia source code string `text` into a data structure of type `TreeType`.
-`parsex` parses a single Julia statement, `parseall` parses top level statements
+`parsestmt` parses a single Julia statement, `parseall` parses top level statements
 at file scope and `parseatom` parses a single Julia identifier or other "syntax
 atom".
 
@@ -140,16 +140,16 @@ also avoid exceptions due to errors, use `ignore_errors=true`.
 """
 
 "$_parse_docs"
-parsex(::Type{T}, text::AbstractString; kws...) where {T} = _parse(:statement, true, T, text; kws...)[1]
+parsestmt(::Type{T}, text::AbstractString; kws...) where {T} = _parse(:statement, true, T, text; kws...)[1]
 
 "$_parse_docs"
-parseall(::Type{T}, text::AbstractString; kws...) where {T} = _parse(:toplevel, true, T, text; kws...)[1]
+parseall(::Type{T}, text::AbstractString; kws...) where {T} = _parse(:all, true, T, text; kws...)[1]
 
 "$_parse_docs"
 parseatom(::Type{T}, text::AbstractString; kws...) where {T} = _parse(:atom, true, T, text; kws...)[1]
 
-parsex(::Type{T}, text::AbstractString, index::Integer; kws...) where {T} = _parse(:statement, false, T, text, index; kws...)
-parseall(::Type{T}, text::AbstractString, index::Integer; kws...) where {T} = _parse(:toplevel, false, T, text, index; kws...)
+parsestmt(::Type{T}, text::AbstractString, index::Integer; kws...) where {T} = _parse(:statement, false, T, text, index; kws...)
+parseall(::Type{T}, text::AbstractString, index::Integer; kws...) where {T} = _parse(:all, false, T, text, index; kws...)
 parseatom(::Type{T}, text::AbstractString, index::Integer; kws...) where {T} = _parse(:atom, false, T, text, index; kws...)
 
 #-------------------------------------------------------------------------------
@@ -182,7 +182,7 @@ This interface works on UTF-8 encoded string or buffer data only.
 """
 function tokenize(text)
     ps = ParseStream(text)
-    parse!(ps, rule=:toplevel)
+    parse!(ps, rule=:all)
     ts = ps.tokens
     output_tokens = Token[]
     for i = 2:length(ts)

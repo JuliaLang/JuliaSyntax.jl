@@ -5,7 +5,7 @@ module JuliaSyntax
 
 # Parsing. See also
 #   parse!(), ParseStream
-export parsex, parseall, parseatom
+export parsestmt, parseall, parseatom
 # Tokenization
 export tokenize, Token, untokenize
 # Source file handling. See also

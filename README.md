@@ -52,7 +52,7 @@ the `call` has the infix `-i` flag):
 ```julia
 julia> using JuliaSyntax
 
-julia> parsex(SyntaxNode, "(x + y)*z", filename="foo.jl")
+julia> parsestmt(SyntaxNode, "(x + y)*z", filename="foo.jl")
 line:col│ tree                                   │ file_name
    1:1  │[call-i]                                │foo.jl
    1:1  │  [parens]
@@ -72,7 +72,7 @@ representation, despite being important for parsing.
 
 ```julia
 julia> text = "(x + y)*z"
-       greentree = parsex(JuliaSyntax.GreenNode, text)
+       greentree = parsestmt(JuliaSyntax.GreenNode, text)
      1:9      │[call]
      1:7      │  [parens]
      1:1      │    (
@@ -109,7 +109,7 @@ julia> show(stdout, MIME"text/plain"(), greentree, text)
 Julia `Expr` can also be produced:
 
 ```julia
-julia> JuliaSyntax.parsex(Expr, "(x + y)*z")
+julia> JuliaSyntax.parsestmt(Expr, "(x + y)*z")
 :((x + y) * z)
 ```
 
