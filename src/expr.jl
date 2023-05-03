@@ -125,7 +125,7 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
 
     # Convert children
     insert_linenums = (headsym === :block || headsym === :toplevel) && need_linenodes
-    args = Vector{Any}(undef, length(node_args)*(insert_linenums ? 2 : 1))
+    args = []
     eq_to_kw_in_call =
         ((headsym === :call || headsym === :dotcall) && is_prefix_call(node)) ||
         headsym === :ref
@@ -138,19 +138,19 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
         for i in 1:length(node_args)
             n = node_args[i]
             if insert_linenums
-                args[2*i-1] = source_location(LineNumberNode, n.source, n.position)
+                push!(args, source_location(LineNumberNode, n.source, n.position))
             end
             eq_to_kw = eq_to_kw_in_call && i > 1 || eq_to_kw_all
             coalesce_dot_with_ops = i==1 &&
                 (nodekind in KSet"call dotcall curly" ||
                  nodekind == K"quote" && flags(node) == COLON_QUOTE)
-            args[insert_linenums ? 2*i : i] =
+            push!(args,
                 _to_expr(n, eq_to_kw=eq_to_kw,
                          map_kw_in_params=in_vcbr,
                          coalesce_dot=coalesce_dot_with_ops,
                          iteration_spec=(headsym == :for && i == 1),
                          need_linenodes=!(headsym == :let && i == 1)
-                        )
+                        ))
         end
         if nodekind == K"block" && has_flags(node, PARENS_FLAG)
             popfirst!(args)
