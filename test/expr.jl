@@ -472,6 +472,12 @@
             Expr(:macrocall, GlobalRef(Core, Symbol("@doc")), LineNumberNode(2), "x", :f)
     end
 
+    @testset "Large integer macros" begin
+        @test parsestmt(Expr, "(0x00000000000000001)") ==
+            Expr(:macrocall, GlobalRef(Core, Symbol("@uint128_str")),
+                 "0x00000000000000001")
+    end
+
     @testset "return" begin
         @test parsestmt(Expr, "return x") == Expr(:return, :x)
         @test parsestmt(Expr, "return")  == Expr(:return, nothing)

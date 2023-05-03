@@ -30,6 +30,7 @@ end
 const AbstractSyntaxNode = TreeNode{<:AbstractSyntaxData}
 
 struct SyntaxData <: AbstractSyntaxData
+    head::SyntaxHead
     source::SourceFile
     raw::GreenNode{SyntaxHead}
     position::Int
@@ -44,7 +45,7 @@ end
 
 Base.show(io::IO, ::ErrorVal) = printstyled(io, "✘", color=:light_red)
 
-function SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead}, position::Integer=1)
+function SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead}, position::Integer=1; keep_parens=false)
     if !haschildren(raw) && !(is_syntax_kind(raw) || is_keyword(raw))
         # Leaf node
         k = kind(raw)
@@ -125,20 +126,25 @@ function SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead}, position::In
             @debug "Leaf node of kind $k unknown to SyntaxNode"
             ErrorVal()
         end
-        return SyntaxNode(nothing, nothing, SyntaxData(source, raw, position, val))
+        return SyntaxNode(nothing, nothing, SyntaxData(head(raw), source, raw, position, val))
     else
         cs = SyntaxNode[]
         pos = position
         for (i,rawchild) in enumerate(children(raw))
             # FIXME: Allowing trivia is_error nodes here corrupts the tree layout.
             if !is_trivia(rawchild) || is_error(rawchild)
-                push!(cs, SyntaxNode(source, rawchild, pos))
+                push!(cs, SyntaxNode(source, rawchild, pos, keep_parens=keep_parens))
             end
             pos += rawchild.span
         end
-        node = SyntaxNode(nothing, cs, SyntaxData(source, raw, position, nothing))
-        for c in cs
-            c.parent = node
+        if !keep_parens && (kind(raw) == K"parens" && length(cs) == 1)
+            node = cs[1]
+            node.data = SyntaxData(node.head, node.source, raw, position, node.val)
+        else
+            node = SyntaxNode(nothing, cs, SyntaxData(head(raw), source, raw, position, nothing))
+            for c in cs
+                c.parent = node
+            end
         end
         return node
     end
@@ -148,7 +154,7 @@ haschildren(node::TreeNode) = node.children !== nothing
 children(node::TreeNode) = (c = node.children; return c === nothing ? () : c)
 
 
-head(node::AbstractSyntaxNode) = head(node.raw)
+head(node::AbstractSyntaxNode) = node.head
 
 span(node::AbstractSyntaxNode) = span(node.raw)
 
@@ -173,7 +179,8 @@ source_location(node::AbstractSyntaxNode) = source_location(node.source, node.po
 
 function interpolate_literal(node::SyntaxNode, val)
     @assert kind(node) == K"$"
-    SyntaxNode(node.source, node.raw, node.position, node.parent, true, val)
+    SyntaxNode(node.parent, node.children,
+               SyntaxData(node.head, node.source, node.raw, node.position, val))
 end
 
 function _show_syntax_node(io, current_filename, node::AbstractSyntaxNode, indent, show_byte_offsets)
@@ -256,12 +263,12 @@ function Base.copy(node::TreeNode)
 end
 
 # shallow-copy the data
-Base.copy(data::SyntaxData) = SyntaxData(data.source, data.raw, data.position, data.val)
+Base.copy(data::SyntaxData) = SyntaxData(data.head, data.source, data.raw, data.position, data.val)
 
-function build_tree(::Type{SyntaxNode}, stream::ParseStream; filename=nothing, first_line=1, kws...)
+function build_tree(::Type{SyntaxNode}, stream::ParseStream; filename=nothing, first_line=1, keep_parens=false, kws...)
     green_tree = build_tree(GreenNode, stream; kws...)
     source = SourceFile(sourcetext(stream), filename=filename, first_line=first_line)
-    SyntaxNode(source, green_tree, first_byte(stream))
+    SyntaxNode(source, green_tree, first_byte(stream), keep_parens=keep_parens)
 end
 
 #-------------------------------------------------------------------------------

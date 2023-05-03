@@ -30,6 +30,22 @@ function reorder_parameters!(args::Vector{Any}, params_pos)
     insert!(args, params_pos, pop!(args))
 end
 
+# Source text with parens node stripped
+function _no_parens_sourcetext(node)
+    pos = node.position
+    raw = node.raw
+    while kind(raw) == K"parens"
+        for c in children(raw)
+            if !is_trivia(c)
+                raw = c
+                break
+            end
+            pos += span(c)
+        end
+    end
+    node.source[pos:pos+span(raw)-1]
+end
+
 function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
                   eq_to_kw=false, map_kw_in_params=false, coalesce_dot=false)
     nodekind = kind(node)
@@ -39,7 +55,7 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
             # Ignore the values of large integers and convert them back to
             # symbolic/textural form for compatibility with the Expr
             # representation of these.
-            str = replace(sourcetext(node), '_'=>"")
+            str = replace(_no_parens_sourcetext(node), '_'=>"")
             headsym = :macrocall
             macname = val isa Int128  ? Symbol("@int128_str")  :
                       val isa UInt128 ? Symbol("@uint128_str") :
@@ -143,7 +159,8 @@ function _to_expr(node::SyntaxNode; iteration_spec=false, need_linenodes=true,
             eq_to_kw = eq_to_kw_in_call && i > 1 || eq_to_kw_all
             coalesce_dot_with_ops = i==1 &&
                 (nodekind in KSet"call dotcall curly" ||
-                 nodekind == K"quote" && flags(node) == COLON_QUOTE)
+                 nodekind == K"quote" && flags(node) == COLON_QUOTE) &&
+                kind(n.raw) != K"parens"
             push!(args,
                 _to_expr(n, eq_to_kw=eq_to_kw,
                          map_kw_in_params=in_vcbr,
