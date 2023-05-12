@@ -1,8 +1,8 @@
 """
 Parse string to SyntaxNode tree and show as an sexpression
 """
-function parse_to_sexpr_str(production, code::AbstractString; v=v"1.6", expr=false)
-    stream = ParseStream(code, version=v)
+function parse_to_sexpr_str(production, code::AbstractString; v=v"1.6", expr=false, kws...)
+    stream = ParseStream(code; version=v, kws...)
     production(ParseState(stream))
     JuliaSyntax.validate_tokens(stream)
     t = build_tree(GreenNode, stream, wrap_toplevel_as_kind=K"None")
@@ -430,6 +430,13 @@ tests = [
         "x\"s\"2"    => """(macrocall @x_str (string-r "s") 2)"""
         "x\"s\"10.0" => """(macrocall @x_str (string-r "s") 10.0)"""
         # 
+        "f(@x a, b)" => "(call f (macrocall @x (tuple a b)))"
+        ((low_precedence_comma_in_brackets=true,), "f(@x a, b)") =>
+            "(call f (macrocall @x a) b)"
+        ((low_precedence_comma_in_brackets=true,), "(@x a, b)") =>
+            "(tuple-p (macrocall @x a) b)"
+        ((low_precedence_comma_in_brackets=true,), "[@x a, b]") =>
+            "(vect (macrocall @x a) b)"
     ],
     JuliaSyntax.parse_resword => [
         # In normal_context
