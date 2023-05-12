@@ -76,9 +76,12 @@ function parse!(::Type{TreeType}, io::IO;
 end
 
 function _parse(rule::Symbol, need_eof::Bool, ::Type{T}, text, index=1; version=VERSION,
+                low_precedence_comma_in_brackets=false,
                 ignore_trivia=true, filename=nothing, first_line=1, ignore_errors=false,
                 ignore_warnings=ignore_errors, kws...) where {T}
-    stream = ParseStream(text, index; version=version)
+    stream = ParseStream(text, index;
+         version=version,
+         low_precedence_comma_in_brackets=low_precedence_comma_in_brackets)
     if ignore_trivia && rule != :all
         bump_trivia(stream, skip_newlines=true)
         empty!(stream)

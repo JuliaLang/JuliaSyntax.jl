@@ -21,7 +21,7 @@ struct ParseState
     whitespace_newline::Bool
     # Enable parsing `where` with high precedence
     where_enabled::Bool
-    # Comma special
+    # Comma binds looser than macro calls (for use in brackets)
     low_precedence_comma::Bool
 end
 
@@ -41,7 +41,8 @@ function ParseState(ps::ParseState; range_colon_enabled=nothing,
         end_symbol === nothing ? ps.end_symbol : end_symbol,
         whitespace_newline === nothing ? ps.whitespace_newline : whitespace_newline,
         where_enabled === nothing ? ps.where_enabled : where_enabled,
-        low_precedence_comma === nothing ? ps.low_precedence_comma : low_precedence_comma)
+        low_precedence_comma === nothing ? ps.low_precedence_comma :
+            low_precedence_comma && ps.stream.low_precedence_comma_in_brackets)
 end
 
 # Functions to change parse state
@@ -2937,7 +2938,8 @@ function parse_cat(ps::ParseState, closer, end_is_symbol)
                     space_sensitive=true,
                     where_enabled=true,
                     whitespace_newline=false,
-                    for_generator=true)
+                    for_generator=true,
+                    low_precedence_comma=true)
     k = peek(ps, skip_newlines=true)
     mark = position(ps)
     if k == closer
