@@ -271,6 +271,12 @@ function core_parser_hook(code, filename::String, lineno::Int, offset::Int, opti
     end
 end
 
+# Variant which is compatible with the way the C function jl_parse passes UInt
+# for lineno and offset
+function core_parser_hook(code, filename::String, lineno::Integer, offset::Integer, options::Symbol)
+    core_parser_hook(code, filename, convert(Int, lineno), convert(Int, offset), options)
+end
+
 # Core._parse gained a `lineno` argument in
 # https://github.com/JuliaLang/julia/pull/43876
 # Prior to this, the following signature was needed:
