@@ -263,8 +263,9 @@ function equals_flisp_parse(exprs_equal, tree)
     exprs_equal(fl_ex, ex)
 end
 
-function _reduce_tree(failing_subtrees, tree; exprs_equal=exprs_equal_no_linenum)
-    if equals_flisp_parse(exprs_equal, tree)
+function _reduce_tree(failing_subtrees, tree; exprs_equal=exprs_equal_no_linenum,
+                      equals_ref_parse=equals_flisp_parse)
+    if equals_ref_parse(exprs_equal, tree)
         return false
     end
     if !haschildren(tree)
@@ -277,7 +278,9 @@ function _reduce_tree(failing_subtrees, tree; exprs_equal=exprs_equal_no_linenum
             if is_trivia(child) || !haschildren(child)
                 continue
             end
-            had_failing_subtrees |= _reduce_tree(failing_subtrees, child; exprs_equal=exprs_equal)
+            had_failing_subtrees |= _reduce_tree(failing_subtrees, child;
+                                                 exprs_equal=exprs_equal,
+                                                 equals_ref_parse=equals_ref_parse)
         end
     end
     if !had_failing_subtrees

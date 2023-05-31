@@ -240,12 +240,16 @@ mutable struct ParseStream
     diagnostics::Vector{Diagnostic}
     # Counter for number of peek()s we've done without making progress via a bump()
     peek_count::Int
+
+    # Feature flags
     # (major,minor) version of Julia we're parsing this code for.
     # May be different from VERSION!
     version::Tuple{Int,Int}
+    # Comma binds looser than macrocall in bracketed expressions
+    low_precedence_comma_in_brackets::Bool
 
-    function ParseStream(text_buf::Vector{UInt8}, text_root, next_byte::Integer,
-                         version::VersionNumber)
+    function ParseStream(text_buf::Vector{UInt8}, text_root, next_byte::Integer;
+                         version=VERSION, low_precedence_comma_in_brackets=false)
         io = IOBuffer(text_buf)
         seek(io, next_byte-1)
         lexer = Tokenize.Lexer(io)
@@ -268,44 +272,45 @@ mutable struct ParseStream
             Vector{TaggedRange}(),
             Vector{Diagnostic}(),
             0,
-            ver)
+            ver,
+            low_precedence_comma_in_brackets)
     end
 end
 
-function ParseStream(text::Vector{UInt8}, index::Integer=1; version=VERSION)
-    ParseStream(text, text, index, version)
+function ParseStream(text::Vector{UInt8}, index::Integer=1; kws...)
+    ParseStream(text, text, index; kws...)
 end
 
 # Buffer with unknown owner. Not exactly recommended, but good for C interop
-function ParseStream(ptr::Ptr{UInt8}, len::Integer, index::Integer=1; version=VERSION)
-    ParseStream(unsafe_wrap(Vector{UInt8}, ptr, len), nothing, index, version)
+function ParseStream(ptr::Ptr{UInt8}, len::Integer, index::Integer=1; kws...)
+    ParseStream(unsafe_wrap(Vector{UInt8}, ptr, len), nothing, index; kws...)
 end
 
 # Buffers originating from strings
-function ParseStream(text::String, index::Integer=1; version=VERSION)
+function ParseStream(text::String, index::Integer=1; kws...)
     ParseStream(unsafe_wrap(Vector{UInt8}, text),
-                text, index, version)
+                text, index; kws...)
 end
-function ParseStream(text::SubString, index::Integer=1; version=VERSION)
+function ParseStream(text::SubString, index::Integer=1; kws...)
     # See also IOBuffer(SubString("x"))
     ParseStream(unsafe_wrap(Vector{UInt8}, pointer(text), sizeof(text)),
-                text, index, version)
+                text, index; kws...)
 end
-function ParseStream(text::AbstractString, index::Integer=1; version=VERSION)
-    ParseStream(String(text), index; version=version)
+function ParseStream(text::AbstractString, index::Integer=1; kws...)
+    ParseStream(String(text), index; kws...)
 end
 
 # IO-based cases
-function ParseStream(io::IOBuffer; version=VERSION)
-    ParseStream(io.data, io, position(io)+1, version)
+function ParseStream(io::IOBuffer; kws...)
+    ParseStream(io.data, io, position(io)+1; kws...)
 end
-function ParseStream(io::Base.GenericIOBuffer; version=VERSION)
+function ParseStream(io::Base.GenericIOBuffer; kws...)
     textbuf = unsafe_wrap(Vector{UInt8}, pointer(io.data), length(io.data))
-    ParseStream(textbuf, io, position(io)+1, version)
+    ParseStream(textbuf, io, position(io)+1; kws...)
 end
-function ParseStream(io::IO; version=VERSION)
+function ParseStream(io::IO; kws...)
     textbuf = read(io)
-    ParseStream(textbuf, textbuf, 1, version)
+    ParseStream(textbuf, textbuf, 1; kws...)
 end
 
 function Base.show(io::IO, mime::MIME"text/plain", stream::ParseStream)

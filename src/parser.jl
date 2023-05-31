@@ -21,24 +21,28 @@ struct ParseState
     whitespace_newline::Bool
     # Enable parsing `where` with high precedence
     where_enabled::Bool
+    # Comma binds looser than macro calls (for use in brackets)
+    low_precedence_comma::Bool
 end
 
 # Normal context
 function ParseState(stream::ParseStream)
-    ParseState(stream, true, false, false, false, false, true)
+    ParseState(stream, true, false, false, false, false, true, false)
 end
 
 function ParseState(ps::ParseState; range_colon_enabled=nothing,
                     space_sensitive=nothing, for_generator=nothing,
                     end_symbol=nothing, whitespace_newline=nothing,
-                    where_enabled=nothing)
+                    where_enabled=nothing, low_precedence_comma=nothing)
     ParseState(ps.stream,
         range_colon_enabled === nothing ? ps.range_colon_enabled : range_colon_enabled,
         space_sensitive === nothing ? ps.space_sensitive : space_sensitive,
         for_generator === nothing ? ps.for_generator : for_generator,
         end_symbol === nothing ? ps.end_symbol : end_symbol,
         whitespace_newline === nothing ? ps.whitespace_newline : whitespace_newline,
-        where_enabled === nothing ? ps.where_enabled : where_enabled)
+        where_enabled === nothing ? ps.where_enabled : where_enabled,
+        low_precedence_comma === nothing ? ps.low_precedence_comma :
+            low_precedence_comma && ps.stream.low_precedence_comma_in_brackets)
 end
 
 # Functions to change parse state
@@ -50,7 +54,8 @@ function normal_context(ps::ParseState)
                where_enabled=true,
                for_generator=false,
                end_symbol=false,
-               whitespace_newline=false)
+               whitespace_newline=false,
+               low_precedence_comma=false)
 end
 
 function with_space_sensitive(ps::ParseState)
@@ -545,7 +550,11 @@ end
 #
 # flisp: parse-eq
 function parse_eq(ps::ParseState)
-    parse_assignment(ps, parse_comma)
+    if ps.low_precedence_comma
+        parse_eq_star(ps)
+    else
+        parse_assignment(ps, parse_comma)
+    end
 end
 
 # parse_eq_star is used where commas are special, for example in an argument list
@@ -2632,7 +2641,6 @@ end
 
 # flisp: parse-space-separated-exprs
 function parse_space_separated_exprs(ps::ParseState)
-    ps = with_space_sensitive(ps)
     n_sep = 0
     while true
         k = peek(ps)
@@ -2929,7 +2937,8 @@ function parse_cat(ps::ParseState, closer, end_is_symbol)
                     space_sensitive=true,
                     where_enabled=true,
                     whitespace_newline=false,
-                    for_generator=true)
+                    for_generator=true,
+                    low_precedence_comma=true)
     k = peek(ps, skip_newlines=true)
     mark = position(ps)
     if k == closer
@@ -2983,7 +2992,8 @@ function parse_paren(ps::ParseState, check_identifiers=true)
     ps = ParseState(ps, range_colon_enabled=true,
                     space_sensitive=false,
                     where_enabled=true,
-                    whitespace_newline=true)
+                    whitespace_newline=true,
+                    low_precedence_comma=true)
     mark = position(ps)
     @check peek(ps) == K"("
     bump(ps, TRIVIA_FLAG) # K"("
@@ -3073,7 +3083,8 @@ function parse_brackets(after_parse::Function,
     ps = ParseState(ps, range_colon_enabled=true,
                     space_sensitive=false,
                     where_enabled=true,
-                    whitespace_newline=true)
+                    whitespace_newline=true,
+                    low_precedence_comma=true)
     params_positions = acquire_positions(ps.stream)
     last_eq_before_semi = 0
     num_subexprs = 0
