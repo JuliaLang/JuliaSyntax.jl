@@ -905,7 +905,7 @@ end
 # ParseStream Post-processing
 
 function validate_tokens(stream::ParseStream)
-    text = sourcetext(stream)
+    txtbuf = textbuf(stream)
     toks = stream.tokens
     charbuf = IOBuffer()
     for i = 2:length(toks)
@@ -922,13 +922,13 @@ function validate_tokens(stream::ParseStream)
         elseif k == K"Float" || k == K"Float32"
             underflow0 = false
             if k == K"Float"
-                x, code = parse_float_literal(Float64, text, fbyte, nbyte)
+                x, code = parse_float_literal(Float64, txtbuf, fbyte, nbyte)
                 # jl_strtod_c can return "underflow" even for valid cases such
                 # as `5e-324` where the source is an exact representation of
                 # `x`. So only warn when underflowing to zero.
                 underflow0 = code === :underflow && x == 0
             else
-                x, code = parse_float_literal(Float32, text, fbyte, nbyte)
+                x, code = parse_float_literal(Float32, txtbuf, fbyte, nbyte)
                 underflow0 = code === :underflow && x == 0
             end
             if code === :ok
@@ -944,7 +944,7 @@ function validate_tokens(stream::ParseStream)
         elseif k == K"Char"
             @assert fbyte < nbyte # Already handled in the parser
             truncate(charbuf, 0)
-            had_error = unescape_julia_string(charbuf, text, fbyte,
+            had_error = unescape_julia_string(charbuf, txtbuf, fbyte,
                                               nbyte, stream.diagnostics)
             if had_error
                 error_kind = K"ErrorInvalidEscapeSequence"
@@ -958,19 +958,18 @@ function validate_tokens(stream::ParseStream)
                 end
             end
         elseif k == K"String" && !has_flags(t, RAW_STRING_FLAG)
-            had_error = unescape_julia_string(devnull, text, fbyte,
+            had_error = unescape_julia_string(devnull, txtbuf, fbyte,
                                               nbyte, stream.diagnostics)
             if had_error
                 error_kind = K"ErrorInvalidEscapeSequence"
             end
         elseif is_error(k) && k != K"error"
             # Emit messages for non-generic token errors
-            #
-            textrange = fbyte:prevind(text, nbyte)
+            tokstr = String(txtbuf[tokrange])
             msg = if k in KSet"ErrorInvisibleChar ErrorUnknownCharacter"
-                "$(_token_error_descriptions[k]) $(repr(text[fbyte]))"
+                "$(_token_error_descriptions[k]) $(repr(tokstr[1]))"
             elseif k in KSet"ErrorInvalidUTF8 ErrorBidiFormatting"
-                "$(_token_error_descriptions[k]) $(repr(text[textrange]))"
+                "$(_token_error_descriptions[k]) $(repr(tokstr))"
             else
                 _token_error_descriptions[k]
             end

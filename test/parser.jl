@@ -804,6 +804,7 @@ tests = [
         "`cmd`"      =>  "(macrocall core_@cmd (cmdstring-r \"cmd\"))"
         "```cmd```"  =>  "(macrocall core_@cmd (cmdstring-s-r \"cmd\"))"
         # literals
+        "true" => "true"
         "42"   => "42"
         "1.0e-1000"   => "0.0"
         "0x123456789abcdefp+0" => "8.19855292164869e16"
