@@ -84,6 +84,9 @@ function _to_SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead},
         if !keep_parens && kind(raw) == K"parens" && length(cs) == 1
             return cs[1]
         end
+        if kind(raw) == K"wrapper" && length(cs) == 1
+            return cs[1]
+        end
         node = SyntaxNode(nothing, cs, SyntaxData(source, raw, position, nothing))
         for c in cs
             c.parent = node
