@@ -545,7 +545,11 @@ end
 #
 # flisp: parse-eq
 function parse_eq(ps::ParseState)
-    parse_assignment(ps, parse_comma)
+    if peek(ps) == K"export"
+        parse_comma(ps)
+    else
+        parse_assignment(ps, parse_comma)
+    end
 end
 
 # parse_eq_star is used where commas are special, for example in an argument list
@@ -1978,6 +1982,13 @@ function parse_resword(ps::ParseState)
         # export \n a      ==>  (export a)
         # export \$a, \$(a*b) ==> (export (\$ a) (\$ (parens (call-i a * b))))
         bump(ps, TRIVIA_FLAG)
+
+        # export scoped=true a, b ==> (export (= scoped true) b)
+        while peek(ps, 1) == K"Identifier" &&
+              peek(ps, 2) == K"="
+            parse_assignment(ps, x->parse_atsym(x, false))
+        end
+
         parse_comma_separated(ps, x->parse_atsym(x, false))
         emit(ps, mark, K"export")
     elseif word in KSet"import using"
