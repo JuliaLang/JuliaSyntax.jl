@@ -917,6 +917,12 @@ const _kind_names =
         # Container for a single statement/atom plus any trivia and errors
         "wrapper"
     "END_SYNTAX_KINDS"
+
+    "BEGIN_LOWERING_KINDS"
+        "Value"
+        "core"
+        "copyast"
+    "END_LOWERING_KINDS"
 ]
 
 """
