@@ -37,11 +37,33 @@ end
 
 const AbstractSyntaxNode = TreeNode{<:AbstractSyntaxData}
 
+# There's two ways this can arise:
+# 1. From parsing a source file.
+# 2. Programmatically
 struct SyntaxData <: AbstractSyntaxData
-    source::SourceFile
-    raw::GreenNode{SyntaxHead}
+    head::SyntaxHead
+    source::Union{Nothing,SourceFile}
+    raw::Union{Nothing,GreenNode{SyntaxHead}}
     position::Int
     val::Any
+end
+
+function SyntaxData(source::SourceFile, raw::GreenNode{SyntaxHead},
+                    position::Int, val::Any)
+    SyntaxData(head(raw), source, raw, position, val)
+end
+
+# SyntaxData constructed "in code"
+function SyntaxData(head::SyntaxHead, val::Any; srcref=nothing)
+    if isnothing(srcref)
+        SyntaxData(head, nothing, nothing, 0, val)
+    else
+        SyntaxData(head, srcref.source, srcref.raw, srcref.position, val)
+    end
+end
+
+function SyntaxData(kind::Kind, val::Any; kws...)
+    SyntaxData(SyntaxHead(kind, EMPTY_FLAGS), val; kws...)
 end
 
 """
@@ -52,6 +74,22 @@ An AST node with a similar layout to `Expr`. Typically constructed from source
 text by calling one of the parser API functions such as [`parseall`](@ref)
 """
 const SyntaxNode = TreeNode{SyntaxData}
+
+# Value of an error node with no children
+struct ErrorVal
+end
+
+Base.show(io::IO, ::ErrorVal) = printstyled(io, "✘", color=:light_red)
+
+function SyntaxNode(head::Union{Kind,SyntaxHead}, children::Vector{SyntaxNode};
+                    srcref=nothing)
+    SyntaxNode(nothing, children, SyntaxData(head, nothing; srcref=srcref))
+end
+
+function SyntaxNode(head::Union{Kind,SyntaxHead}, val::Any;
+                    srcref=nothing)
+    SyntaxNode(nothing, nothing, SyntaxData(head, val; srcref=srcref))
+end
 
 function SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead};
                     keep_parens=false, position::Integer=1)
@@ -97,6 +135,7 @@ end
 
 haschildren(node::TreeNode) = node.children !== nothing
 children(node::TreeNode) = (c = node.children; return c === nothing ? () : c)
+numchildren(node::TreeNode) = (isnothing(node.children) ? 0 : length(node.children))
 
 
 """
@@ -105,12 +144,26 @@ children(node::TreeNode) = (c = node.children; return c === nothing ? () : c)
 Get the [`SyntaxHead`](@ref) of a node of a tree or other syntax-related data
 structure.
 """
-head(node::AbstractSyntaxNode) = head(node.raw)
+head(node::AbstractSyntaxNode) = head(node.data)
 
-span(node::AbstractSyntaxNode) = span(node.raw)
+span(node::AbstractSyntaxNode) = span(node.data)
 
-first_byte(node::AbstractSyntaxNode) = node.position
-last_byte(node::AbstractSyntaxNode)  = node.position + span(node) - 1
+first_byte(node::AbstractSyntaxNode) = first_byte(node.data)
+last_byte(node::AbstractSyntaxNode)  = last_byte(node.data)
+
+
+# TODO: Deprecate these as they rely on the field names of AbstractSyntaxData?
+head(data::AbstractSyntaxData) = head(data.raw)
+span(data::AbstractSyntaxData) = span(data.raw)
+first_byte(data::AbstractSyntaxData) = data.position
+last_byte(data::AbstractSyntaxData)  = data.position + span(data) - 1
+source_line(node::AbstractSyntaxNode) = source_line(data.source, data.position)
+source_location(data::AbstractSyntaxData) = source_location(data.source, data.position)
+
+head(data::SyntaxData) = data.head
+span(data::SyntaxData) = isnothing(data.raw) ? 0 : span(data.raw)
+first_byte(data::SyntaxData) = data.position
+last_byte(data::SyntaxData)  = data.position + span(data) - 1
 
 """
     sourcetext(node)
@@ -125,18 +178,23 @@ function Base.range(node::AbstractSyntaxNode)
     (node.position-1) .+ (1:span(node))
 end
 
-source_line(node::AbstractSyntaxNode) = source_line(node.source, node.position)
-source_location(node::AbstractSyntaxNode) = source_location(node.source, node.position)
+source_line(node::AbstractSyntaxData) = source_line(node.data)
+source_location(node::AbstractSyntaxNode) = source_location(node.data)
 
-function interpolate_literal(node::SyntaxNode, val)
-    @assert kind(node) == K"$"
-    SyntaxNode(node.source, node.raw, node.position, node.parent, true, val)
+filename(node::AbstractSyntaxNode) = filename(node.data)
+function filename(data::SyntaxData)
+    isnothing(data.source) ? "<none>" : data.source.filename
+end
+
+function source_location(data::SyntaxData)
+    return isnothing(data.source) ? (0,0) :
+           source_location(data.source, data.position)
 end
 
 function _show_syntax_node(io, current_filename, node::AbstractSyntaxNode,
                            indent, show_byte_offsets)
-    fname = node.source.filename
-    line, col = source_location(node.source, node.position)
+    fname = filename(node)
+    line, col = source_location(node)
     posstr = "$(lpad(line, 4)):$(rpad(col,3))│"
     if show_byte_offsets
         posstr *= "$(lpad(first_byte(node),6)):$(rpad(last_byte(node),6))│"
@@ -214,7 +272,7 @@ function Base.copy(node::TreeNode)
 end
 
 # shallow-copy the data
-Base.copy(data::SyntaxData) = SyntaxData(data.source, data.raw, data.position, data.val)
+Base.copy(data::SyntaxData) = SyntaxData(data.head, data.source, data.raw, data.position, data.val)
 
 function build_tree(::Type{SyntaxNode}, stream::ParseStream;
                     filename=nothing, first_line=1, keep_parens=false, kws...)
