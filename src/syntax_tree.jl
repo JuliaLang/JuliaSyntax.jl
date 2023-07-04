@@ -157,7 +157,7 @@ head(data::AbstractSyntaxData) = head(data.raw)
 span(data::AbstractSyntaxData) = span(data.raw)
 first_byte(data::AbstractSyntaxData) = data.position
 last_byte(data::AbstractSyntaxData)  = data.position + span(data) - 1
-source_line(node::AbstractSyntaxNode) = source_line(data.source, data.position)
+source_line(data::AbstractSyntaxData) = source_line(data.source, data.position)
 source_location(data::AbstractSyntaxData) = source_location(data.source, data.position)
 
 head(data::SyntaxData) = data.head
@@ -178,12 +178,12 @@ function Base.range(node::AbstractSyntaxNode)
     (node.position-1) .+ (1:span(node))
 end
 
-source_line(node::AbstractSyntaxData) = source_line(node.data)
+source_line(node::AbstractSyntaxNode) = source_line(node.data)
 source_location(node::AbstractSyntaxNode) = source_location(node.data)
 
 filename(node::AbstractSyntaxNode) = filename(node.data)
 function filename(data::SyntaxData)
-    isnothing(data.source) ? "<none>" : data.source.filename
+    isnothing(data.source) ? "" : data.source.filename
 end
 
 function source_location(data::SyntaxData)

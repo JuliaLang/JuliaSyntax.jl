@@ -845,3 +845,64 @@ heuristics to get something which "looks nice"... and ML systems have become
 very good at heuristics. Also, we've got huge piles of training data — just
 choose some high quality, tastefully hand-formatted libraries.
 
+
+# How does macro expansion work?
+
+`macroexpand(m::Module, x)` calls `jl_macroexpand` in ast.c:
+
+```
+jl_value_t *jl_macroexpand(jl_value_t *expr, jl_module_t *inmodule)
+{
+    expr = jl_copy_ast(expr);
+    expr = jl_expand_macros(expr, inmodule, NULL, 0, jl_world_counter, 0);
+    expr = jl_call_scm_on_ast("jl-expand-macroscope", expr, inmodule);
+    return expr;
+}
+```
+
+First we copy the AST here. This is mostly a trivial deep copy of `Expr`s and
+shallow copy of their non-`Expr` children, except for when they contain
+embedded `CodeInfo/phi/phic` nodes which are also deep copied.
+
+Second we expand macros recursively by calling 
+
+`jl_expand_macros(expr, inmodule, macroctx, onelevel, world, throw_load_error)`
+
+This relies on state indexed by `inmodule` and `world`, which gives it some
+funny properties:
+* `module` expressions can't be expanded: macro expansion depends on macro
+  lookup within the module, but we can't do that without `eval`.
+
+Expansion proceeds from the outermost to innermost macros. So macros see any
+macro calls or quasiquote (`quote/$`) in their children as unexpanded forms.
+
+Things which are expanded:
+* `quote` is expanded using flisp code in `julia-bq-macro`
+  - symbol / ssavalue -> `QuoteNode` (inert)
+  - atom -> itself
+  - at depth zero, `$` expands to its content
+  - Expressions `x` without `$` expand to `(copyast (inert x))`
+  - Other expressions containing a `$` expand to a call to `_expr` with all the
+    args mapped through `julia-bq-expand-`. Roughly!
+  - Special handling exists for multi-splatting arguments as in `quote quote $$(x...) end end`
+* `macrocall` proceeds with
+  - Expand with `jl_invoke_julia_macro`
+    - Call `eval` on the macro name (!!) to get the macro function. Look up
+      the method.
+    - Set up arguments for the macro calling convention 
+    - Wraps errors in macro invocation in `LoadError`
+    - Returns the expression, as well as the module at
+      which that method of that macro was defined and `LineNumberNode` where
+      the macro was invoked in the source.
+  - Deep copy the AST
+  - Recursively expand child macros in the context of the module where the
+    macrocall method was defined
+  - Wrap the result in `(hygienic-scope ,result ,newctx.m ,lineinfo)` (except
+    for special case optimizations)
+* `hygenic-scope` expands `args[1]` with `jl_expand_macros`, with the module
+  of expansion set to `args[2]`.  Ie, it's the `Expr` representation of the
+  module and expression arguments to `macroexpand`. The way this returns
+  either `hygenic-scope` or unwraps is a bit confusing.
+* "`do` macrocalls" have their own special handling because the macrocall is
+  the child of the `do`. This seems like a mess!!
+

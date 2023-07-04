@@ -29,6 +29,8 @@ include("expr.jl")
 end
 include("source_files.jl")
 
+include("macroexpand.jl")
+
 if VERSION >= v"1.6"
     # Tests restricted to 1.6+ due to
     # * Core._parse hook doesn't exist on v1.5 and lower

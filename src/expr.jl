@@ -472,6 +472,8 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         # This should only happen for errors wrapped next to what should have
         # been single statements or atoms - represent these as blocks.
         headsym = :block
+    elseif k == K"hygienic_scope"
+        headsym = Symbol("hygienic-scope")
     end
 
     return Expr(headsym, args...)
@@ -521,7 +523,8 @@ end
 
 function _to_expr(node::SyntaxNode)
     if !haschildren(node)
-        offset, txtbuf = _unsafe_wrap_substring(sourcetext(node.source))
+        offset, txtbuf = isnothing(node.source) ? (0,nothing) :
+                         _unsafe_wrap_substring(sourcetext(node.source))
         return _leaf_to_Expr(node.source, txtbuf, head(node), range(node) .+ offset, node)
     end
     cs = children(node)
