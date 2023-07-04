@@ -919,6 +919,7 @@ const _kind_names =
     "END_SYNTAX_KINDS"
 
     "BEGIN_LOWERING_KINDS"
+        "hygienic_scope"
         "Value"
         "core"
         "copyast"
