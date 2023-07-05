@@ -1,31 +1,14 @@
-JuliaSyntax.include_string(Main, raw"""
-
-module A
-
-module B
-
-x = "x in B"
-
-macro f(y)
-   quote
-       (x, $y)
-   end
-end
-
-end
-
-import .B: @f
-
-z = "z in A"
-
-function h()
-   @f z
-end
-
-end
-
-""", filename="bar.jl")
+JuliaSyntax.include2(Main, "macroexpand_inc.jl")
 
 @testset "macroexpand" begin
-    @test A.h() == ("x in B", "z in A")
+    loc = A.LocationMacros.loc()
+    @test loc.mod == A.LocationMacros
+    @test last(splitpath(loc.file)) ==  "macroexpand_inc.jl"
+    @test loc.line == 24
+    @test loc.column == 72
+
+    @test A.hygiene_test() == ("x in B", "z in A")
+
+    @test A.old_macro_test(1) == 3
+    @test A.old_macro_test(2) == 5
 end
