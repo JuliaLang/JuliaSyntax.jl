@@ -134,13 +134,23 @@ function macroexpand(mod, ex)
     if kind(ex) == K"quote"
         expand_quasiquote(mod, ex[1])
     elseif kind(ex) == K"macrocall"
-        macfunc = Base.eval(mod, Expr(ex[1]))
-        margs = [SyntaxLiteral(mod, e) for e in children(ex)[2:end]]
-        result = invokelatest(macfunc, mod, margs...)
-        @assert result isa SyntaxLiteral
-        return SyntaxNode(result)
+        macname = ex[1]
+        macfunc = Base.eval(mod, Expr(macname))
+        new_call_arg_types =
+            Tuple{SyntaxNode, Module, ntuple(_->SyntaxNode, numchildren(ex)-1)...}
+        if hasmethod(macfunc, new_call_arg_types, world=Base.get_world_counter())
+            margs = [SyntaxLiteral(mod, e) for e in children(ex)[2:end]]
+            result = invokelatest(macfunc, macname, mod, margs...)
+            return result isa SyntaxLiteral ?
+                   SyntaxNode(result) :
+                   SyntaxNode(K"Value", result)
+        else
+            # Attempt to invoke as an old-style macro
+            result = Base.macroexpand(mod, Expr(ex))
+            return SyntaxNode(K"Value", result)
+        end
     else
-        SyntaxNode(kind(ex), [macroexpand(mod, c) for c in children(ex)]; srcref=ex)
+        SyntaxNode(head(ex), [macroexpand(mod, c) for c in children(ex)]; srcref=ex)
     end
 end
 
@@ -168,12 +178,18 @@ function lower(mod, ex)
         callex = ex[1]
         callex_cs = copy(children(callex))
         callex_cs[1] = SyntaxNode(K"Identifier", macname, srcref=callex_cs[1])
-        # TODO: Why do we need __module__ ??  Only for argument-less macros? :-(
-        insert!(callex_cs, 2,
+        splice!(callex_cs, 2:1,
+                [
+                SyntaxNode(K"::", [
+                    SyntaxNode(K"Identifier", :__macroname__, srcref=callex),
+                    SyntaxNode(K"Value", SyntaxNode, srcref=callex)
+                ], srcref=callex),
                 SyntaxNode(K"::", [
                     SyntaxNode(K"Identifier", :__module__, srcref=callex),
                     SyntaxNode(K"Identifier", :Module, srcref=callex)
-                ], srcref=callex))
+                ], srcref=callex),
+                ]
+               )
         return SyntaxNode(K"function",
                           [SyntaxNode(K"call", callex_cs, srcref=callex), ex[2]],
                           srcref=ex)
@@ -215,6 +231,22 @@ function eval2(mod, ex::SyntaxNode)
         @assert _can_eval(ex)
         e = Expr(expand(mod, ex))
         Base.eval(mod, e)
+    end
+end
+
+function include2(mod, filename)
+    path, prev = Base._include_dependency(mod, filename)
+    code = read(path, String)
+    tls = task_local_storage()
+    tls[:SOURCE_PATH] = path
+    try
+        return include_string(mod, code; filename=path)
+    finally
+        if prev === nothing
+            delete!(tls, :SOURCE_PATH)
+        else
+            tls[:SOURCE_PATH] = prev
+        end
     end
 end
 
