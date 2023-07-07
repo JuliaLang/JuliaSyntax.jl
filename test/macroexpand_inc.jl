@@ -1,5 +1,7 @@
 module A
 
+@__EXTENSIONS__ new_macros=true
+
 module LocationMacros
     using JuliaSyntax
 
@@ -25,6 +27,9 @@ module LocationMacros
     end
 end
 
+using JuliaSyntax
+using JuliaSyntax: valueof
+
 module B
     x = "x in B"
 
@@ -39,6 +44,29 @@ z = "z in A"
 
 function hygiene_test()
     B.@f z
+end
+
+macro smallpow(ex)
+    @assert kind(ex) == K"call"
+    @assert JuliaSyntax.is_infix_op_call(ex)
+    @assert valueof(ex[2]) == :^
+    N = valueof(ex[3])
+    @assert N isa Integer
+    e = ex[1]
+    for i = 2:N
+        e = :($e * $(ex[1]))
+    end
+    return e
+end
+
+macro smallpow_wrapped(ex)
+    quote
+        @smallpow $ex
+    end
+end
+
+function macro_calling_macro_test(x)
+    @smallpow_wrapped x^3
 end
 
 function old_macro_test(x)

@@ -451,6 +451,7 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         headsym = :block
     elseif k == K"hygienic_scope"
         headsym = Symbol("hygienic-scope")
+        @assert length(args) == 2
     end
 
     return Expr(headsym, args...)

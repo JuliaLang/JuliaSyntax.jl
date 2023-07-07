@@ -919,10 +919,13 @@ const _kind_names =
     "END_SYNTAX_KINDS"
 
     "BEGIN_LOWERING_KINDS"
-        "hygienic_scope"
+        # A literal Julia value of any kind, as might be inserted during macro
+        # expansion
         "Value"
-        "core"
-        "copyast"
+        # Scope expressions `(hygienic_scope ex s)` mean `ex` should be
+        # interpreted as being in scope `s`. If `s` is a Module, symbols in
+        # `ex` are looked up in that module. If `s` is `nothing`, symbols are
+        "hygienic_scope"
     "END_LOWERING_KINDS"
 ]
 

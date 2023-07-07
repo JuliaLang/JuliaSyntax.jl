@@ -9,31 +9,59 @@
 # tree and we wouldn't later be able to use a compressed GreenNode inside a
 # lazy tree to store those parts of the AST...
 struct SyntaxLiteral
-    mod::Module
+    scope::Union{Module,Nothing}
     tree::SyntaxNode
+
+    function SyntaxLiteral(scope::Union{Module,Nothing}, tree::SyntaxNode)
+        while kind(tree) == K"hygienic_scope"
+            tree = tree[1]
+        end
+        return new(scope, tree)
+    end
 end
 
-children(ex::SyntaxLiteral) = (SyntaxLiteral(ex.mod, c) for c in children(ex.tree))
+children(ex::SyntaxLiteral) = (child(ex.scope, i) for i in 1:numchildren(tree))
 haschildren(ex::SyntaxLiteral) = haschildren(ex.tree)
 numchildren(ex::SyntaxLiteral) = numchildren(ex.tree)
-child(ex::SyntaxLiteral, path::Int...) = SyntaxLiteral(ex.mod, child(ex.tree, path...))
+
+function child(ex::SyntaxLiteral, path::Int...)
+    # Somewhat awkward way to prevent macros from ever seeing the special
+    # K"hygienic_scope" expression.
+    #
+    # We could avoid this unwrapping if we were willing to stash the module
+    # inside the source instead.
+    m = ex.scope
+    e = ex.tree
+    for i in path
+        e = e[i]
+        while kind(e) == K"hygienic_scope"
+            m = e[2]
+            e = e[1]
+        end
+    end
+    SyntaxLiteral(m, e)
+end
 
 head(ex::SyntaxLiteral) = head(ex.tree)
 span(ex::SyntaxLiteral) = span(ex.tree)
-Base.getindex(ex::SyntaxLiteral, i::Integer) = SyntaxLiteral(ex.mod, getindex(ex.tree, i))
+Base.getindex(ex::SyntaxLiteral, i::Integer) = child(ex, i)
 Base.lastindex(ex::SyntaxLiteral) = lastindex(ex.tree)
+
+# TODO: Should this return val without a scope, or should it return a GlobalRef?
+# TODO: Decide between this and the 0-arg getindex
+valueof(ex::SyntaxLiteral) = ex.tree.val
 
 function Base.getindex(ex::SyntaxLiteral)
     val = ex.tree.val
     if kind(ex) == K"Identifier"
-        GlobalRef(ex.mod, val)
+        GlobalRef(ex.scope, val)
     else
         val
     end
 end
 
 function Base.show(io::IO, mime::MIME"text/plain", ex::SyntaxLiteral)
-    print(io, "SyntaxLiteral in module $(ex.mod):\n")
+    print(io, "SyntaxLiteral in scope $(ex.scope):\n")
     show(io, mime, ex.tree)
 end
 
@@ -42,7 +70,7 @@ function _syntax_literal(mod, expr)
 end
 
 function SyntaxNode(ex::SyntaxLiteral)
-    SyntaxNode(K"hygienic_scope", [ex.tree, SyntaxNode(K"Value", ex.mod)];
+    SyntaxNode(K"hygienic_scope", [ex.tree, SyntaxNode(K"Value", ex.scope)];
                srcref=ex.tree)
 end
 
@@ -64,7 +92,8 @@ function _make_syntax_node(mod, srcref, children...)
 end
 
 is_identifier(ex::AbstractSyntaxNode) = is_identifier(kind(ex))
-is_identifier(k::Kind) = (k == K"Identifier" || k == K"var")
+is_identifier(k::Kind) = (k == K"Identifier" || k == K"var" || k == K"MacroName" ||
+                          k == K"StringMacroName" || k == K"CmdMacroName")
 
 function contains_active_interp(ex, depth)
     k = kind(ex)
@@ -80,7 +109,6 @@ end
 
 function expand_quasiquote(mod, expr, depth=0)
     if !contains_active_interp(expr, depth)
-        # TODO: Make copyast unnecessary?
         return SyntaxNode(K"call",
                           SyntaxNode[
                               SyntaxNode(K"Value", _syntax_literal; srcref=expr),
@@ -135,19 +163,23 @@ function macroexpand(mod, ex)
         expand_quasiquote(mod, ex[1])
     elseif kind(ex) == K"macrocall"
         macname = ex[1]
+        # FIXME: Use eval2? FIXME: do we handle K"hygienic_scope" here properly?
         macfunc = Base.eval(mod, Expr(macname))
         new_call_arg_types =
             Tuple{SyntaxNode, Module, ntuple(_->SyntaxNode, numchildren(ex)-1)...}
         if hasmethod(macfunc, new_call_arg_types, world=Base.get_world_counter())
-            margs = [SyntaxLiteral(mod, e) for e in children(ex)[2:end]]
-            result = invokelatest(macfunc, macname, mod, margs...)
-            return result isa SyntaxLiteral ?
-                   SyntaxNode(result) :
-                   SyntaxNode(K"Value", result)
+            margs = [SyntaxLiteral(nothing, e) for e in children(ex)[2:end]]
+            expanded = invokelatest(macfunc, macname, mod, margs...)
+            expanded = expanded isa SyntaxLiteral ?
+                   SyntaxNode(expanded) :
+                   SyntaxNode(K"Value", expanded, srcref=ex)
+            result = macroexpand(mod, expanded)
+            #@info "Expanded macro" ex result
+            return result
         else
             # Attempt to invoke as an old-style macro
             result = Base.macroexpand(mod, Expr(ex))
-            return SyntaxNode(K"Value", result)
+            return SyntaxNode(K"Value", result, srcref=ex)
         end
     else
         SyntaxNode(head(ex), [macroexpand(mod, c) for c in children(ex)]; srcref=ex)
@@ -202,6 +234,33 @@ function expand(mod, ex)
     lower(mod, ex)
 end
 
+# Insert Expr(:esc) expressions to escape any `(scope ex nothing)` expressions
+# to the outer containing scope.
+function _insert_scope_escapes!(ex, depth)
+    if !(ex isa Expr)
+        return ex
+    end
+    ex::Expr
+    d = depth
+    if ex.head == Symbol("hygienic-scope")
+        if isnothing(ex.args[2])
+            x = ex.args[1]
+            for i=1:depth
+                x = esc(x)
+            end
+            return x
+        else
+            d += 1
+        end
+    end
+    map!(e->_insert_scope_escapes!(e, d), ex.args, ex.args)
+    return ex
+end
+
+function expand(::Type{Expr}, mod, ex)
+    _insert_scope_escapes!(Expr(expand(mod, ex)), 0)
+end
+
 #-------------------------------------------------------------------------------
 function _can_eval(ex)
     k = kind(ex)
@@ -224,12 +283,24 @@ function eval2(mod, ex::SyntaxNode)
     elseif k == K"module"
         std_imports = !has_flags(ex, BARE_MODULE_FLAG)
         newmod = Base.eval(mod, Expr(:module, std_imports, ex[1].val, Expr(:block)))
+        if std_imports
+            # JuliaSyntax-specific imports
+            Base.eval(newmod, :(using JuliaSyntax: @__EXTENSIONS__))
+        end
         for e in children(ex[2])
             eval2(newmod, e)
         end
     else
-        @assert _can_eval(ex)
-        e = Expr(expand(mod, ex))
+        if get_extension(mod, :new_macros, false)
+            @assert _can_eval(ex)
+            # NB: Base throws LoadError with a misleading line in this
+            # implementation of eval (which doesn't include LineNumberNodes which
+            # are normally a part of :toplevel or :module Expr's).
+            # Best fix: remove LoadError!  Alternative fix: add line numbers...
+            e = expand(Expr, mod, ex)
+        else
+            e = Expr(ex)
+        end
         Base.eval(mod, e)
     end
 end
@@ -252,5 +323,39 @@ end
 
 function include_string(mod, str; filename=nothing)
     eval2(mod, parseall(SyntaxNode, str; filename=filename))
+end
+
+_extensions_var = Symbol("##__EXTENSIONS__")
+
+function get_extension(mod::Module, key::Symbol, default=nothing)
+    while true
+        if isdefined(mod, _extensions_var)
+            d = getfield(mod, _extensions_var)
+            if haskey(d, key)
+                return d[key]
+            end
+        end
+        pmod = parentmodule(mod)
+        if pmod == mod
+            break
+        end
+        mod = pmod
+    end
+    return default
+end
+
+"""
+    @__EXTENSIONS__ new_macros=true
+"""
+macro __EXTENSIONS__(exs...)
+    kvs = Any[]
+    for e in exs
+        @assert Meta.isexpr(e, :(=), 2)
+        @assert e.args[1] isa Symbol
+        push!(kvs, Expr(:call, :(=>), QuoteNode(e.args[1]), esc(e.args[2])))
+    end
+    # TODO: Might this better expand to `Expr(:meta)` if it were supported in
+    # the runtime?
+    :(const $(esc(_extensions_var)) = Dict{Symbol,Any}($(kvs...)))
 end
 
