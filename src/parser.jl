@@ -236,7 +236,7 @@ function is_initial_reserved_word(ps::ParseState, k)
     k = kind(k)
     is_iresword = k in KSet"begin while if for try return break continue function
                             macro quote let local global const do struct module
-                            baremodule using import export public"
+                            baremodule using import export"
     # `begin` means firstindex(a) inside a[...]
     return is_iresword && !(k == K"begin" && ps.end_symbol)
 end
@@ -501,8 +501,11 @@ end
 
 # Parse docstrings attached by a space or single newline
 #
+# caller is responsible for calling this only at the toplevel or passing a `down` argument
+# other than `parse_public`
+#
 # flisp: parse-docstring
-function parse_docstring(ps::ParseState, down=parse_eq)
+function parse_docstring(ps::ParseState, down=parse_public)
     mark = position(ps)
     down(ps)
     if peek_behind(ps).kind == K"string"
@@ -532,6 +535,20 @@ function parse_docstring(ps::ParseState, down=parse_eq)
             down(ps)
             emit(ps, mark, K"doc")
         end
+    end
+end
+
+# Parse `public foo, bar` at the toplevel
+#
+# separate from parse_resword so that public is only a keyword at the toplevel
+# caller is responsible for ensuring this is only called at the toplevel
+#
+# flisp: syntax added after flisp implementation stopped being maintained
+function parse_public(ps::ParseState)
+    if peek(ps) == K"public"
+        parse_resword(ps)
+    else
+        parse_eq(ps)
     end
 end
 
@@ -1970,7 +1987,7 @@ function parse_resword(ps::ParseState)
         bump_closing_token(ps, K"end")
         emit(ps, mark, K"module",
              word == K"baremodule" ? BARE_MODULE_FLAG : EMPTY_FLAGS)
-    elseif word ∈ (K"export", K"public")
+    elseif word in KSet"export public"
         # export a         ==>  (export a)
         # export @a        ==>  (export @a)
         # export a, \n @b  ==>  (export a @b)
