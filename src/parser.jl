@@ -236,7 +236,7 @@ function is_initial_reserved_word(ps::ParseState, k)
     k = kind(k)
     is_iresword = k in KSet"begin while if for try return break continue function
                             macro quote let local global const do struct module
-                            baremodule using import export"
+                            baremodule using import export public"
     # `begin` means firstindex(a) inside a[...]
     return is_iresword && !(k == K"begin" && ps.end_symbol)
 end
@@ -545,11 +545,7 @@ end
 #
 # flisp: parse-eq
 function parse_eq(ps::ParseState)
-    if peek(ps) == K"export"
-        parse_comma(ps)
-    else
-        parse_assignment(ps, parse_comma)
-    end
+    parse_assignment(ps, parse_comma)
 end
 
 # parse_eq_star is used where commas are special, for example in an argument list
@@ -1974,7 +1970,7 @@ function parse_resword(ps::ParseState)
         bump_closing_token(ps, K"end")
         emit(ps, mark, K"module",
              word == K"baremodule" ? BARE_MODULE_FLAG : EMPTY_FLAGS)
-    elseif word == K"export"
+    elseif word ∈ (K"export", K"public")
         # export a         ==>  (export a)
         # export @a        ==>  (export @a)
         # export a, \n @b  ==>  (export a @b)
@@ -1982,15 +1978,8 @@ function parse_resword(ps::ParseState)
         # export \n a      ==>  (export a)
         # export \$a, \$(a*b) ==> (export (\$ a) (\$ (parens (call-i a * b))))
         bump(ps, TRIVIA_FLAG)
-
-        # export scoped=true a, b ==> (export (= scoped true) b)
-        while peek(ps, 1) == K"Identifier" &&
-              peek(ps, 2) == K"="
-            parse_assignment(ps, x->parse_atsym(x, false))
-        end
-
         parse_comma_separated(ps, x->parse_atsym(x, false))
-        emit(ps, mark, K"export")
+        emit(ps, mark, word)
     elseif word in KSet"import using"
         parse_imports(ps)
     elseif word == K"do"

@@ -48,6 +48,7 @@ const _kind_names =
         "local"
         "macro"
         "module"
+        "public"
         "quote"
         "return"
         "struct"
