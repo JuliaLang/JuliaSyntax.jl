@@ -924,9 +924,10 @@ const _kind_names =
         # expansion
         "Value"
         # Scope expressions `(hygienic_scope ex s)` mean `ex` should be
-        # interpreted as being in scope `s`. If `s` is a Module, symbols in
-        # `ex` are looked up in that module. If `s` is `nothing`, symbols are
+        # interpreted as being in scope `s`.
         "hygienic_scope"
+        # Compiler metadata hints
+        "meta"
     "END_LOWERING_KINDS"
 ]
 
@@ -1128,6 +1129,7 @@ is_block_continuation_keyword(k::Kind) = K"BEGIN_BLOCK_CONTINUATION_KEYWORDS" <=
 is_literal(k::Kind) = K"BEGIN_LITERAL" <= k <= K"END_LITERAL"
 is_operator(k::Kind) = K"BEGIN_OPS" <= k <= K"END_OPS"
 is_word_operator(k::Kind) = (k == K"in" || k == K"isa" || k == K"where")
+is_identifier(k::Kind) = (k == K"Identifier" || k == K"var") || is_macro_name(k)
 
 is_contextual_keyword(k) = is_contextual_keyword(kind(k))
 is_error(k) = is_error(kind(k))
@@ -1135,7 +1137,7 @@ is_keyword(k) = is_keyword(kind(k))
 is_literal(k) = is_literal(kind(k))
 is_operator(k) = is_operator(kind(k))
 is_word_operator(k) = is_word_operator(kind(k))
-
+is_identifier(x) = is_identifier(kind(x))
 
 # Predicates for operator precedence
 # FIXME: Review how precedence depends on dottedness, eg

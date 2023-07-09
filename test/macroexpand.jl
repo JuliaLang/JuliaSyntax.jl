@@ -7,7 +7,7 @@ JuliaSyntax.include2(Main, "macroexpand_inc.jl")
     @test loc.line == 26
     @test loc.column == 72
 
-    @test A.hygiene_test() == ("x in B", "z in A")
+    @test A.hygiene_test() == ("x in B", "z in A", "in @g")
 
     @test A.old_macro_test(1) == 3
     @test A.old_macro_test(2) == 5

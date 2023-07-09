@@ -472,9 +472,6 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         # This should only happen for errors wrapped next to what should have
         # been single statements or atoms - represent these as blocks.
         headsym = :block
-    elseif k == K"hygienic_scope"
-        headsym = Symbol("hygienic-scope")
-        @assert length(args) == 2
     end
 
     return Expr(headsym, args...)
