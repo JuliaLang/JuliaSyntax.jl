@@ -33,9 +33,13 @@ using JuliaSyntax: valueof
 module B
     x = "x in B"
 
+    macro g()
+        "in @g"
+    end
+
     macro f(y)
         quote
-            (x, $y)
+            (x, $y, @g)
         end
     end
 end
