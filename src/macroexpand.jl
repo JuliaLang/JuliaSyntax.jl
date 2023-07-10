@@ -26,7 +26,23 @@ struct SyntaxLiteral
     end
 end
 
-children(ex::SyntaxLiteral) = (child(ex.scope, i) for i in 1:numchildren(tree))
+function Base.iterate(ex::SyntaxLiteral)
+    if numchildren(ex) == 0
+        return nothing
+    end
+    return (child(ex,1), 1)
+end
+
+function Base.iterate(ex::SyntaxLiteral, i)
+    i += 1
+    if i > numchildren(ex)
+        return nothing
+    else
+        return (child(ex, i), i)
+    end
+end
+
+children(ex::SyntaxLiteral) = (SyntaxLiteral(ex.scope, c) for c in children(ex.tree))
 haschildren(ex::SyntaxLiteral) = haschildren(ex.tree)
 numchildren(ex::SyntaxLiteral) = numchildren(ex.tree)
 
@@ -80,6 +96,63 @@ end
 function SyntaxNode(ex::SyntaxLiteral)
     SyntaxNode(K"hygienic_scope", [ex.tree, SyntaxNode(K"Value", ex.scope)];
                srcref=ex.tree)
+end
+
+struct MacroContext
+    macroname::SyntaxNode
+    var"module"::Module
+    # TODO: For warnings, we could have a diagnostics field here in the macro
+    # context too? Or maybe macros could just use @warn for that?
+end
+
+#-------------------------------------------------------------------------------
+
+struct MacroExpansionError
+    context::Union{Nothing,MacroContext}
+    diagnostics::Diagnostics
+end
+
+function MacroExpansionError(context::MacroContext,
+        ex::Union{SyntaxNode,SyntaxLiteral}, msg::String)
+    diagnostics = Diagnostics()
+    emit_diagnostic(diagnostics, ex, error=msg)
+    MacroExpansionError(context, diagnostics)
+end
+
+function MacroExpansionError(diagnostics::Diagnostics)
+    MacroExpansionError(nothing, diagnostics)
+end
+
+function MacroExpansionError(ex::Union{SyntaxNode,SyntaxLiteral}, msg::String)
+    diagnostics = Diagnostics()
+    emit_diagnostic(diagnostics, ex, error=msg)
+    MacroExpansionError(diagnostics)
+end
+
+function Base.showerror(io::IO, exc::MacroExpansionError)
+    print(io, "MacroExpansionError")
+    ctx = exc.context
+    if !isnothing(ctx)
+        print(io, " while expanding ", ctx.macroname,
+              " in module ", ctx.module)
+    end
+    print(io, ":\n")
+    show_diagnostics(io, exc.diagnostics)
+end
+
+function emit_diagnostic(diagnostics::Diagnostics, ex::SyntaxNode; kws...)
+    # TODO: Do we really want this diagnostic representation? Source ranges are
+    # flexible, but it seems we loose something by not keeping the offending
+    # expression `ex` somewhere?
+    #
+    # An alternative could be to allow diagnostic variants TextDiagnostic and
+    # TreeDiagnostic or something?
+    diagnostic = Diagnostic(first_byte(ex), last_byte(ex); kws...)
+    push!(diagnostics, (ex.source, diagnostic))
+end
+
+function emit_diagnostic(diagnostics::Diagnostics, ex::SyntaxLiteral; kws...)
+    emit_diagnostic(diagnostics, ex.tree; kws...)
 end
 
 #-------------------------------------------------------------------------------
@@ -186,11 +259,21 @@ function macroexpand(mod, ex)
         macname = ex[1]
         macfunc = eval2(mod, macname)
         new_call_arg_types =
-            Tuple{SyntaxNode, Module, ntuple(_->SyntaxNode, numchildren(ex)-1)...}
+            Tuple{MacroContext, ntuple(_->SyntaxNode, numchildren(ex)-1)...}
         if hasmethod(macfunc, new_call_arg_types, world=Base.get_world_counter())
             margs = [SyntaxLiteral(ScopeSpec(mod, false), e)
                      for e in children(ex)[2:end]]
-            expanded = invokelatest(macfunc, macname, mod, margs...)
+            ctx = MacroContext(macname, mod)
+            expanded = try
+                invokelatest(macfunc, ctx, margs...)
+            catch exc
+                if exc isa MacroExpansionError
+                    # Add context to the error
+                    rethrow(MacroExpansionError(ctx, exc.diagnostics))
+                else
+                    throw(MacroExpansionError(ctx, ex, "Error expanding macro"))
+                end
+            end
             expanded = expanded isa SyntaxLiteral ?
                    SyntaxNode(expanded) :
                    SyntaxNode(K"Value", expanded, srcref=ex)
@@ -230,18 +313,12 @@ function lower(mod, ex)
         callex = ex[1]
         callex_cs = copy(children(callex))
         callex_cs[1] = SyntaxNode(K"Identifier", macname, srcref=callex_cs[1])
-        splice!(callex_cs, 2:1,
-                [
+        insert!(callex_cs, 2,
                 SyntaxNode(K"::", [
-                    SyntaxNode(K"Identifier", :__macroname__, srcref=callex),
-                    SyntaxNode(K"Value", SyntaxNode, srcref=callex)
+                    SyntaxNode(K"Identifier", :__context__, srcref=callex),
+                    SyntaxNode(K"Value", MacroContext, srcref=callex)
                 ], srcref=callex),
-                SyntaxNode(K"::", [
-                    SyntaxNode(K"Identifier", :__module__, srcref=callex),
-                    SyntaxNode(K"Identifier", :Module, srcref=callex)
-                ], srcref=callex),
-                ]
-               )
+        )
         return SyntaxNode(K"function",
                           [SyntaxNode(K"call", callex_cs, srcref=callex), ex[2]],
                           srcref=ex)
@@ -308,9 +385,23 @@ function eval2(mod, ex::SyntaxNode)
         newmod = Base.eval(mod, Expr(:module, std_imports, ex[1].val, Expr(:block)))
         if std_imports
             # JuliaSyntax-specific imports
-            Base.eval(newmod, :(using JuliaSyntax: @__EXTENSIONS__))
+            Base.eval(newmod, quote
+                using JuliaSyntax: @__EXTENSIONS__
+                eval(x::$SyntaxLiteral) = $eval2(x)
+            end)
         end
-        for e in children(ex[2])
+        stmts = children(ex[2])
+        first_stmt = 1
+        if !isempty(stmts) && kind(stmts[1]) == K"macrocall" &&
+                valueof(stmts[1][1]) == Symbol("@__EXTENSIONS__")
+            eval2(newmod, stmts[1])
+            first_stmt += 1
+            if get_extension(newmod, :new_macros, false) && std_imports
+                # Override include() for the module
+                Base.eval(newmod, :(include(path) = $(JuliaSyntax.include2)($newmod, path)))
+            end
+        end
+        for e in stmts[first_stmt:end]
             eval2(newmod, e)
         end
     else
@@ -326,6 +417,10 @@ function eval2(mod, ex::SyntaxNode)
         end
         Base.eval(mod, e)
     end
+end
+
+function eval2(ex::SyntaxLiteral)
+    eval2(ex.scope.mod, ex.tree)
 end
 
 function include2(mod, filename)
