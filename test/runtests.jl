@@ -29,7 +29,9 @@ include("expr.jl")
 end
 include("source_files.jl")
 
-JuliaSyntax.include2(@__MODULE__, "macroexpand.jl")
+if VERSION >= v"1.9"
+    JuliaSyntax.include2(@__MODULE__, "macroexpand.jl")
+end
 
 if VERSION >= v"1.6"
     # Tests restricted to 1.6+ due to
