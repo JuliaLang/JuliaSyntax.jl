@@ -3,6 +3,15 @@
 
 abstract type AbstractSyntaxData end
 
+# TODO:
+#
+# Investigate attributes in ECS form and immutable trees.
+# Key advantages of immutable trees:
+#   * Leaves are stored inline
+#   * No need for to ever do "copyast"
+# Key advantages of ECS:
+#   * Multiple attributes without changing the concrete data structure
+
 mutable struct TreeNode{NodeData}   # ? prevent others from using this with NodeData <: AbstractSyntaxData?
     parent::Union{Nothing,TreeNode{NodeData}}
     children::Union{Nothing,Vector{TreeNode{NodeData}}}
@@ -88,6 +97,15 @@ end
 
 function SyntaxNode(head::Union{Kind,SyntaxHead}, val::Any;
                     srcref=nothing)
+    SyntaxNode(nothing, nothing, SyntaxData(head, val; srcref=srcref))
+end
+
+function SyntaxNode(head::Union{Kind,SyntaxHead}, srcref::SyntaxNode,
+                    children::Vector{SyntaxNode})
+    SyntaxNode(nothing, children, SyntaxData(head, nothing; srcref=srcref))
+end
+
+function SyntaxNode(head::Union{Kind,SyntaxHead}, srcref::SyntaxNode, val::Any)
     SyntaxNode(nothing, nothing, SyntaxData(head, val; srcref=srcref))
 end
 

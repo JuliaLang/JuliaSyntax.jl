@@ -94,8 +94,7 @@ function _syntax_literal(scope, expr)
 end
 
 function SyntaxNode(ex::SyntaxLiteral)
-    SyntaxNode(K"hygienic_scope", [ex.tree, SyntaxNode(K"Value", ex.scope)];
-               srcref=ex.tree)
+    SyntaxNode(K"hygienic_scope", ex.tree, [ex.tree, SyntaxNode(K"Value", ex.scope)])
 end
 
 struct MacroContext
@@ -165,11 +164,11 @@ function _make_syntax_node(scope, srcref, children...)
         elseif c isa SyntaxLiteral
             push!(cs, SyntaxNode(c))
         else
-            push!(cs, SyntaxNode(K"Value", c, srcref=c))
+            push!(cs, SyntaxNode(K"Value", c, c))
         end
     end
     sr = srcref isa SyntaxLiteral ? srcref.tree : srcref
-    SyntaxLiteral(scope, SyntaxNode(head(srcref), cs, srcref=sr))
+    SyntaxLiteral(scope, SyntaxNode(head(srcref), sr, cs))
 end
 
 function contains_active_interp(ex, depth)
@@ -190,13 +189,12 @@ function expand_quasiquote_content(mod, ex, depth)
         # Or would it be neater to lower to an intermediate AST form instead,
         # with lowering to actual calls to _syntax_literal in "lowering
         # proper"? Same question further down...
-        return SyntaxNode(K"call",
+        return SyntaxNode(K"call", ex,
                           SyntaxNode[
-                              SyntaxNode(K"Value", _syntax_literal;      srcref=ex),
-                              SyntaxNode(K"Value", ScopeSpec(mod, true); srcref=ex),
-                              SyntaxNode(K"Value", ex;                   srcref=ex),
-                          ],
-                          srcref=ex)
+                              SyntaxNode(K"Value", ex, _syntax_literal),
+                              SyntaxNode(K"Value", ex, ScopeSpec(mod, true)),
+                              SyntaxNode(K"Value", ex, ex)
+                          ])
     end
 
     # We have an interpolation deeper in the tree somewhere - expand to an
@@ -276,16 +274,16 @@ function macroexpand(mod, ex)
             end
             expanded = expanded isa SyntaxLiteral ?
                    SyntaxNode(expanded) :
-                   SyntaxNode(K"Value", expanded, srcref=ex)
+                   SyntaxNode(K"Value", ex, expanded)
             result = macroexpand(mod, expanded)
             return result
         else
             # Attempt to invoke as an old-style macro
             result = Base.macroexpand(mod, Expr(ex))
-            return SyntaxNode(K"Value", result, srcref=ex)
+            return SyntaxNode(K"Value", ex, result)
         end
     else
-        return SyntaxNode(head(ex), [macroexpand(mod, c) for c in children(ex)]; srcref=ex)
+        return SyntaxNode(head(ex), ex, [macroexpand(mod, c) for c in children(ex)])
     end
 end
 
@@ -312,18 +310,16 @@ function lower(mod, ex)
         macname = Symbol("@", ex[1][1].val)
         callex = ex[1]
         callex_cs = copy(children(callex))
-        callex_cs[1] = SyntaxNode(K"Identifier", macname, srcref=callex_cs[1])
+        callex_cs[1] = SyntaxNode(K"Identifier", callex_cs[1], macname)
         insert!(callex_cs, 2,
-                SyntaxNode(K"::", [
-                    SyntaxNode(K"Identifier", :__context__, srcref=callex),
-                    SyntaxNode(K"Value", MacroContext, srcref=callex)
-                ], srcref=callex),
-        )
-        return SyntaxNode(K"function",
-                          [SyntaxNode(K"call", callex_cs, srcref=callex), ex[2]],
-                          srcref=ex)
+                SyntaxNode(K"::", callex, [
+                    SyntaxNode(K"Identifier", callex, :__context__)
+                    SyntaxNode(K"Value", callex, MacroContext)
+                ]))
+        return SyntaxNode(K"function", ex,
+                          [SyntaxNode(K"call", callex, callex_cs), ex[2]])
     end
-    SyntaxNode(head(ex), map(e->lower(mod, e), children(e)), srcref=ex)
+    SyntaxNode(head(ex), ex, map(e->lower(mod, e), children(e)))
 end
 
 function expand(mod, ex)
