@@ -920,14 +920,46 @@ const _kind_names =
     "END_SYNTAX_KINDS"
 
     "BEGIN_LOWERING_KINDS"
-        # A literal Julia value of any kind, as might be inserted during macro
-        # expansion
+        # Compiler metadata hints
+        "meta"
+        # A literal Julia value of any kind, as might be inserted by the AST
+        # during macro expansion
         "Value"
+        "inbounds"
+        "inline"
+        "noinline"
+        "loopinfo"
+        # Identifier for a value which is only assigned once ("SSA value")
+        "SSAValue"
         # Scope expressions `(hygienic_scope ex s)` mean `ex` should be
         # interpreted as being in scope `s`.
         "hygienic_scope"
-        # Compiler metadata hints
-        "meta"
+        # Various heads harvested from flisp lowering.
+        # (TODO: May or may not need all these - assess later)
+        "break_block"
+        "scope_block"
+        "local_def"
+        "_while"
+        "_do_while"
+        "with_static_parameters"
+        "top"
+        "core"
+        "toplevel_butfirst"
+        "thunk"
+        "lambda"
+        "moved_local"
+        "the_exception"
+        "foreigncall"
+        "new"
+        "globalref"
+        "outerref"
+        "enter"
+        "leave"
+        "goto"
+        "gotoifnot"
+        "trycatchelse"
+        "tryfinally"
+        "method"
     "END_LOWERING_KINDS"
 ]
 
