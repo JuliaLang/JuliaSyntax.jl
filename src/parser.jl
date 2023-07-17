@@ -21,24 +21,79 @@ struct ParseState
     whitespace_newline::Bool
     # Enable parsing `where` with high precedence
     where_enabled::Bool
+    # Track whether we're currently within top level code
+    toplevel::Bool
 end
+
+@eval export a, b
+@eval public a, b
+
+for i in 1:10
+    @eval module Moo
+        public cow
+    end
+end
+
+# Options listed in order of breaking more things ...
+# *** public parsed strictly at top level (in a module or file top level scope) (use the Expr if you want funny stuff)
+# * public parsed strictly at top level (in a module or file top level scope) or macrocall (good for @eval; breaks ModularInterfaceTools)
+# * public parsed as export in all top level code but not in `function` or `struct`, `for` `while` etc
+# * public parsed as export in all top level code but not in `function` or `struct`
+# * public parsed as export (ie, everywhere)
+
+`public a, b` == `export a, b` ≠ `public export=false a, b`
+
+public foo, bar
+public export=false sum, prod
+
+--
+
+# Triage proposed this ?
+# :/ The genreal public's favorate
+# :(
+export foo, bar # send (goods or services) to another country for sale. / a commodity, article, or service sold abroad.
+public sum, prod # done, perceived, or existing in open view.
+
+--
+
+# Triage proposed this ?
+public sum, prod
+
+# Claire and Lilith's favourite default for the attributes version (maybe :-) )
+public export=true foo, bar
+
+# But how to incentivize people not to do this
+export foo, bar
+
+--
+
+public export=true api=DictInternals foo, bar
+
+--
+
+from numpy import *
+
+
+#=:)=# @eval public A, B
+#=:(=# @eval quote public A, B end
 
 # Normal context
 function ParseState(stream::ParseStream)
-    ParseState(stream, true, false, false, false, false, true)
+    ParseState(stream, true, false, false, false, false, true, true)
 end
 
 function ParseState(ps::ParseState; range_colon_enabled=nothing,
                     space_sensitive=nothing, for_generator=nothing,
                     end_symbol=nothing, whitespace_newline=nothing,
-                    where_enabled=nothing)
+                    where_enabled=nothing, toplevel=nothing)
     ParseState(ps.stream,
         range_colon_enabled === nothing ? ps.range_colon_enabled : range_colon_enabled,
         space_sensitive === nothing ? ps.space_sensitive : space_sensitive,
         for_generator === nothing ? ps.for_generator : for_generator,
         end_symbol === nothing ? ps.end_symbol : end_symbol,
         whitespace_newline === nothing ? ps.whitespace_newline : whitespace_newline,
-        where_enabled === nothing ? ps.where_enabled : where_enabled)
+        where_enabled === nothing ? ps.where_enabled : where_enabled,
+        toplevel === nothing ? ps.toplevel : toplevel)
 end
 
 # Functions to change parse state
@@ -545,6 +600,25 @@ end
 #
 # flisp: syntax added after flisp implementation stopped being maintained
 function parse_public(ps::ParseState)
+    public A, B # no
+
+    x = :D
+
+    ex = quote
+        public A, B # yes
+        public $x # yes
+
+        function f()
+            public $x # no
+        end
+    end
+
+    "doc"
+    x = 4
+
+    "a" + "v"
+    v = 4
+
     if peek(ps) == K"public"
         parse_resword(ps)
     else
