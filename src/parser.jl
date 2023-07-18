@@ -35,7 +35,7 @@ for i in 1:10
 end
 
 # Options listed in order of breaking more things ...
-# *** public parsed strictly at top level (in a module or file top level scope) (use the Expr if you want funny stuff)
+ACTION# *** public parsed strictly at top level (in a module or file top level scope) (use the Expr if you want funny stuff)
 # * public parsed strictly at top level (in a module or file top level scope) or macrocall (good for @eval; breaks ModularInterfaceTools)
 # * public parsed as export in all top level code but not in `function` or `struct`, `for` `while` etc
 # * public parsed as export in all top level code but not in `function` or `struct`
@@ -61,13 +61,32 @@ public sum, prod
 
 # Claire and Lilith's favourite default for the attributes version (maybe :-) )
 public export=true foo, bar
+# ACTION: However we parse public, make sure that this ^^ is a parse error :)
 
-# But how to incentivize people not to do this
+export scoped=true foo, bar # not breaking (also don't implement it)
+
+# How to incentivize people not to do export anymore?
 export foo, bar
+
+# What about having the Julia syntax version in Project.toml.
+# Semantics:
+# - All Project.toml's get the current julia syntax version $V when the project is created.
+# - When using a newer version $W, any breaking syntax changes are disabled, and the parser behaves as in version $V.
+# - Users can upgrade their Project.toml at any time by bumping the version
+# - Users are incentivised to use new syntax in three ways:
+#   * They get the other cool new syntax features they might want
+#   * New Project.tomls use new syntax by default
+#   * Deprecated syntax can be warned about (maybe?)
+# - "Problem" ... users without Project.toml's are kinda screwed haha
+
+# Can never do this:
+# One option is to make the defaults such that `public foo, bar` == `export foo, bar`
 
 --
 
-public export=true api=DictInternals foo, bar
+# Can never do this:
+public foo, bar
+public export=false foo, bar
 
 --
 
