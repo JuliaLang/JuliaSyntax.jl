@@ -17,12 +17,19 @@ function test_parse(production, input, output)
     else
         opts = NamedTuple()
     end
-    @test parse_to_sexpr_str(production, input; opts...) == output
+    parsed = parse_to_sexpr_str(production, input; opts...)
+    if output isa AbstractPattern
+        @test match(output, parsed) !== nothing
+    else
+        @test parsed == output
+    end
 end
 
 function test_parse(inout::Pair)
     test_parse(JuliaSyntax.parse_toplevel, inout...)
 end
+
+const PARSE_ERROR = r"\(error-t "
 
 # TODO:
 # * Extract the following test cases from the source itself.
@@ -434,7 +441,7 @@ tests = [
         "x\"s\"in"   => """(macrocall @x_str (string-r "s") "in")"""
         "x\"s\"2"    => """(macrocall @x_str (string-r "s") 2)"""
         "x\"s\"10.0" => """(macrocall @x_str (string-r "s") 10.0)"""
-        # 
+        #
     ],
     JuliaSyntax.parse_resword => [
         # In normal_context
@@ -932,6 +939,17 @@ tests = [
         "`\xf5`"      =>  "(macrocall core_@cmd (cmdstring-r (ErrorInvalidUTF8)))"
         "10.0e1000'"  =>  "(ErrorNumericOverflow)"
         "10.0f100'"   =>  "(ErrorNumericOverflow)"
+    ],
+    JuliaSyntax.parse_stmts => [
+        "function f(public)\n    public + 3\nend"       => "(function (call f public) (block (call-i public + 3)))"
+        "public A, B"                                   => "(public A B)"
+        "if true \n public *= 4 \n end"                 => "(if true (block (*= public 4)))"
+        "module Mod\n public A, B \n end"               => "(module Mod (block (public A B)))"
+        "module Mod2\n a = 3; b = 6; public a, b\n end" => "(module Mod2 (block (= a 3) (= b 6) (public a b)))"
+        "a = 3; b = 6; public a, b"                     => "(toplevel-; (= a 3) (= b 6) (public a b))"
+        "begin \n public A, B \n end"                   => PARSE_ERROR
+        "if true \n public A, B \n end"                 => PARSE_ERROR
+        "public export=true foo, bar"                   => PARSE_ERROR
     ],
     JuliaSyntax.parse_docstring => [
         """ "notdoc" ]        """ => "(string \"notdoc\")"

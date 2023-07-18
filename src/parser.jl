@@ -21,98 +21,24 @@ struct ParseState
     whitespace_newline::Bool
     # Enable parsing `where` with high precedence
     where_enabled::Bool
-    # Track whether we're currently within top level code
-    toplevel::Bool
 end
-
-@eval export a, b
-@eval public a, b
-
-for i in 1:10
-    @eval module Moo
-        public cow
-    end
-end
-
-# Options listed in order of breaking more things ...
-ACTION# *** public parsed strictly at top level (in a module or file top level scope) (use the Expr if you want funny stuff)
-# * public parsed strictly at top level (in a module or file top level scope) or macrocall (good for @eval; breaks ModularInterfaceTools)
-# * public parsed as export in all top level code but not in `function` or `struct`, `for` `while` etc
-# * public parsed as export in all top level code but not in `function` or `struct`
-# * public parsed as export (ie, everywhere)
-
-`public a, b` == `export a, b` ≠ `public export=false a, b`
-
-public foo, bar
-public export=false sum, prod
-
---
-
-# Triage proposed this ?
-# :/ The genreal public's favorate
-# :(
-export foo, bar # send (goods or services) to another country for sale. / a commodity, article, or service sold abroad.
-public sum, prod # done, perceived, or existing in open view.
-
---
-
-# Triage proposed this ?
-public sum, prod
-
-# Claire and Lilith's favourite default for the attributes version (maybe :-) )
-public export=true foo, bar
-# ACTION: However we parse public, make sure that this ^^ is a parse error :)
-
-export scoped=true foo, bar # not breaking (also don't implement it)
-
-# How to incentivize people not to do export anymore?
-export foo, bar
-
-# What about having the Julia syntax version in Project.toml.
-# Semantics:
-# - All Project.toml's get the current julia syntax version $V when the project is created.
-# - When using a newer version $W, any breaking syntax changes are disabled, and the parser behaves as in version $V.
-# - Users can upgrade their Project.toml at any time by bumping the version
-# - Users are incentivised to use new syntax in three ways:
-#   * They get the other cool new syntax features they might want
-#   * New Project.tomls use new syntax by default
-#   * Deprecated syntax can be warned about (maybe?)
-# - "Problem" ... users without Project.toml's are kinda screwed haha
-
-# Can never do this:
-# One option is to make the defaults such that `public foo, bar` == `export foo, bar`
-
---
-
-# Can never do this:
-public foo, bar
-public export=false foo, bar
-
---
-
-from numpy import *
-
-
-#=:)=# @eval public A, B
-#=:(=# @eval quote public A, B end
 
 # Normal context
 function ParseState(stream::ParseStream)
-    ParseState(stream, true, false, false, false, false, true, true)
+    ParseState(stream, true, false, false, false, false, true)
 end
 
 function ParseState(ps::ParseState; range_colon_enabled=nothing,
                     space_sensitive=nothing, for_generator=nothing,
                     end_symbol=nothing, whitespace_newline=nothing,
-                    where_enabled=nothing, toplevel=nothing)
+                    where_enabled=nothing)
     ParseState(ps.stream,
         range_colon_enabled === nothing ? ps.range_colon_enabled : range_colon_enabled,
         space_sensitive === nothing ? ps.space_sensitive : space_sensitive,
         for_generator === nothing ? ps.for_generator : for_generator,
         end_symbol === nothing ? ps.end_symbol : end_symbol,
         whitespace_newline === nothing ? ps.whitespace_newline : whitespace_newline,
-        where_enabled === nothing ? ps.where_enabled : where_enabled,
-        toplevel === nothing ? ps.toplevel : toplevel)
+        where_enabled === nothing ? ps.where_enabled : where_enabled)
 end
 
 # Functions to change parse state
@@ -556,7 +482,7 @@ end
 # flisp: parse-stmts
 function parse_stmts(ps::ParseState)
     mark = position(ps)
-    do_emit = parse_Nary(ps, parse_docstring, (K";",), (K"NewlineWs",))
+    do_emit = parse_Nary(ps, parse_public, (K";",), (K"NewlineWs",))
     # check for unparsed junk after an expression
     junk_mark = position(ps)
     while peek(ps) ∉ KSet"EndMarker NewlineWs"
@@ -573,13 +499,24 @@ function parse_stmts(ps::ParseState)
     end
 end
 
+# Parse `public foo, bar` at the toplevel
+#
+# separate from parse_resword so that public is only a keyword at the toplevel
+# caller is responsible for ensuring this is only called at the toplevel
+#
+# flisp: syntax added after flisp implementation stopped being maintained
+function parse_public(ps::ParseState)
+    if peek(ps) == K"public"
+        parse_resword(ps)
+    else
+        parse_docstring(ps)
+    end
+end
+
 # Parse docstrings attached by a space or single newline
 #
-# caller is responsible for calling this only at the toplevel or passing a `down` argument
-# other than `parse_public`
-#
 # flisp: parse-docstring
-function parse_docstring(ps::ParseState, down=parse_public)
+function parse_docstring(ps::ParseState, down=parse_eq)
     mark = position(ps)
     down(ps)
     if peek_behind(ps).kind == K"string"
@@ -609,39 +546,6 @@ function parse_docstring(ps::ParseState, down=parse_public)
             down(ps)
             emit(ps, mark, K"doc")
         end
-    end
-end
-
-# Parse `public foo, bar` at the toplevel
-#
-# separate from parse_resword so that public is only a keyword at the toplevel
-# caller is responsible for ensuring this is only called at the toplevel
-#
-# flisp: syntax added after flisp implementation stopped being maintained
-function parse_public(ps::ParseState)
-    public A, B # no
-
-    x = :D
-
-    ex = quote
-        public A, B # yes
-        public $x # yes
-
-        function f()
-            public $x # no
-        end
-    end
-
-    "doc"
-    x = 4
-
-    "a" + "v"
-    v = 4
-
-    if peek(ps) == K"public"
-        parse_resword(ps)
-    else
-        parse_eq(ps)
     end
 end
 
@@ -2076,7 +1980,7 @@ function parse_resword(ps::ParseState)
         end
         # module A \n a \n b \n end  ==>  (module A (block a b))
         # module A \n "x"\na \n end  ==>  (module A (block (doc (string "x") a)))
-        parse_block(ps, parse_docstring)
+        parse_block(ps, parse_public)
         bump_closing_token(ps, K"end")
         emit(ps, mark, K"module",
              word == K"baremodule" ? BARE_MODULE_FLAG : EMPTY_FLAGS)
