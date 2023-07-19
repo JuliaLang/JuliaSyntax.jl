@@ -506,7 +506,7 @@ end
 #
 # flisp: syntax added after flisp implementation stopped being maintained
 function parse_public(ps::ParseState)
-    if peek(ps) == K"public"
+    if peek(ps) == K"public" && peek(ps, 2) == K"Identifier"
         parse_resword(ps)
     else
         parse_docstring(ps)

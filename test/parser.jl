@@ -950,6 +950,7 @@ tests = [
         "begin \n public A, B \n end"                   => PARSE_ERROR
         "if true \n public A, B \n end"                 => PARSE_ERROR
         "public export=true foo, bar"                   => PARSE_ERROR
+        "public(x::String) = false"                     => "(= (call public (::-i x String)) false)"
     ],
     JuliaSyntax.parse_docstring => [
         """ "notdoc" ]        """ => "(string \"notdoc\")"
