@@ -949,8 +949,8 @@ tests = [
         "a = 3; b = 6; public a, b"                     => "(toplevel-; (= a 3) (= b 6) (public a b))"
         "begin \n public A, B \n end"                   => PARSE_ERROR
         "if true \n public A, B \n end"                 => PARSE_ERROR
-        "public export=true foo, bar"                   => PARSE_ERROR
-        "public experimental=true foo, bar"             => PARSE_ERROR
+        "public export=true foo, bar"                   => PARSE_ERROR # but these may be
+        "public experimental=true foo, bar"             => PARSE_ERROR # supported soon ;)
         "public(x::String) = false"                     => "(= (call public (::-i x String)) false)"
     ],
     JuliaSyntax.parse_docstring => [
