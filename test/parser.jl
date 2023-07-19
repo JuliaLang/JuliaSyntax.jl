@@ -18,7 +18,7 @@ function test_parse(production, input, output)
         opts = NamedTuple()
     end
     parsed = parse_to_sexpr_str(production, input; opts...)
-    if output isa AbstractPattern
+    if output isa Regex # Could be AbstractPattern, but that type was added in Julia 1.6.
         @test match(output, parsed) !== nothing
     else
         @test parsed == output
