@@ -2,212 +2,10 @@
 # non-type-related compiler passes)
 
 #-------------------------------------------------------------------------------
-# Musings about constructing and matching syntax trees.
-#
-# Essentially, we want to be able match on the `head()`.
-
-# What if we had macros to construct expression trees for cases where
-# expression literals aren't ideal?
-#
-# Maybe we need these for pattern matching anyway? But... child ordering is
-# then implied in the API?? We want to avoid this?
-#
-# Syntax Ideas
-#
-# Rich syntax? `head => [args ...]` style
-#
-# @SyntaxNode ref=ex break_block => [
-#     Identifier => :loop_exit,
-#     _while => [
-#         $(expand_condition(ex[1]))
-#         break_block => [
-#             Identifier => :loop_cont
-#             scope_block => $(blockify(expand_forms(ex[2]))
-#         ]
-#     ]
-# ]
-#
-# Function call style
-#
-# @syntax ref=ex break_block(
-#     Identifier => :loop_exit,
-#     _while(
-#         $(expand_condition(ex[1])),
-#         break_block(
-#             Identifier => :loop_cont,
-#             scope_block(
-#                 $(blockify(expand_forms(ex[2])))
-#             )
-#         )
-#     )
-# )
-#
-# S-expression style
-#
-# @syntax ref=ex [break_block
-#                  Identifier => :loop_exit
-#                  [_while
-#                    $(expand_condition(ex[1]))
-#                    [break_block
-#                      Identifier => :loop_cont
-#                      [scope_block
-#                        $(blockify(expand_forms(ex[2])))]]]]
-#
-#
-# Trying to avoid child ordering ... could we have properties?
-#
-# @syntax while => [
-#     cond = $cond
-#     body = $body
-# ]
-#
-# We'd want symmetry so the following works?
-#
-#     ex = make_some_node(...)
-#     @info "condition is" ex.cond
-#     @info "body is" ex.body
-#
-# For pattern matching, syntax exactly mirroring the constructor would be (a)
-# traditional and (b) mean learning only one syntax is required
-#
-# What about tree components where the children really are an array?  In that
-# case specifically allow accessing a `children` field?  Or `args` field?
-# `block` is naturally like this. (Disallow this in other cases though!?
-# Implicit child ordering should not be in the API!)
-#
-# What about predicates matching the head?
-#
-# @match ex begin
-#     while => (cond=$x body=$y) begin
-#         # `x` and `y` are bound here??
-#     end
-#     block => (children=$x) begin
-#         # `x` is child list here
-#     end
-#     $pred => begin
-#         # tested with ismatch(ex, pred) by pattern compiler??
-#     end
-#     _ => begin
-#         # default case
-#         # What is bound here? We want a binding for the whole expression?
-#     end
-# end
-#
-# Generically, the idea here is that ...
-#
-# @match x begin
-#     a ~ (q=$u, r=$v) => begin
-#         body1
-#     end
-#     $pred ~ (q=$u) => begin
-#         body2
-#     end
-#     _ => begin
-#         body3
-#     end
-# end
-#
-# compiles down to something like ...
-#
-# if tagmatch(x, matcher(typeof(x), :a))
-#     u = matchfield(x, :q)
-#     v = matchfield(x, :r)
-#     body1
-# elseif tagmatch(x, matcher(typeof(x), pred))
-#     u = matchfield(x, :q)
-#     body2
-# else
-#     body3
-# end
-#
-# The point of this lowering is that stuff like `matcher(typeof(x), :a)` can
-# probably be constant folded ... `tagmatch(tag, matcher(typeof(x), pred))`
-# would end up as `pred(tag)`
-#
-# Should the `a` and `b` be quoted or unquoted by default??  It's often just so
-# damn convenient for them to be quoted ... but then if there's tags which
-# aren't valid syntax like K"." ... well that's annoying hey?!  You don't want
-# to have to write $(K".") ugh!
-
-matcher(::Type{SyntaxNode}, sym::Symbol) = convert(Kind, string(sym))
-matcher(::Type{SyntaxNode}, k::Kind)     = k
-
-function tagmatch(ex::SyntaxNode, k::Kind)
-    kind(ex) == k
-end
-
-@noinline function field_not_found(ex, sym)
-    throw(ArgumentError("Field $sym not found in expression of kind $(kind(ex))"))
-end
-
-function matchfield(ex::SyntaxNode, sym::Symbol)
-    k = kind(ex)
-    if sym === :children
-        k == K"block" ? children(ex) : field_not_found(ex, sym)
-    elseif sym === :condition
-        k == K"while" ? ex[1] : field_not_found(ex, sym)
-    elseif sym === :body
-        k == K"while" ? ex[2] : field_not_found(ex, sym)
-    else
-        field_not_found(ex, sym)
-    end
-end
-
-macro match(x, pattern_block)
-    @assert Meta.isexpr(pattern_block, :block)
-    conditions = []
-    bodies = []
-    for pattern in pattern_block.args
-        pattern isa LineNumberNode && continue
-        @assert Meta.isexpr(pattern, :call)
-        unpacked = []
-        if pattern.args[1] == :~
-            tag_pattern = pattern.args[2]
-            a3 = pattern.args[3]
-            @assert Meta.isexpr(a3, :call) && a3.args[1] == :(=>)
-            unpack = a3.args[2]
-            @assert Meta.isexpr(unpack, :tuple)
-            for x in unpack.args
-                @assert Meta.isexpr(x, :(=))
-                field_name = x.args[1]
-                @assert field_name isa Symbol
-                @assert Meta.isexpr(x.args[2], :$)
-                var_name = x.args[2].args[1]
-                @assert var_name isa Symbol
-                push!(unpacked, :($(esc(var_name)) = matchfield(x, $(QuoteNode(field_name)))))
-            end
-            body = a3.args[3]
-        elseif pattern.args[1] == :(=>)
-            tag_pattern = pattern.args[2]
-            body = pattern.args[3]
-        else
-            @assert false "Bad match pattern $pattern"
-        end
-        push!(conditions, :(tagmatch(x, matcher(x_type, $(esc(tag_pattern))))))
-        push!(bodies, :(
-            let
-                $(unpacked...)
-                $(esc(body))
-            end
-        ))
-    end
-    if_chain = nothing
-    for (c,b) in Iterators.reverse(zip(conditions, bodies))
-        if_chain = Expr(:elseif, c, b, if_chain)
-    end
-    if_chain = Expr(:if, if_chain.args...)
-    quote
-        x = $(esc(x))
-        x_type = typeof(x)
-        $if_chain
-    end
-end
-
-#-------------------------------------------------------------------------------
 # Utilities
 
 struct ExpansionContext
-    next_ssa_id::Ref{Int}
+    next_ssa_label::Ref{Int}
 end
 
 ExpansionContext() = ExpansionContext(Ref(0))
@@ -216,10 +14,10 @@ function Identifier(val, srcref)
     SyntaxNode(K"Identifier", val, srcref=srcref)
 end
 
-function SSAValue(ctx, srcref)
-    val = ctx.next_ssa_id[]
-    ctx.next_ssa_id[] += 1
-    SyntaxNode(K"SSAValue", val, srcref=srcref)
+function SSALabel(ctx, srcref)
+    val = ctx.next_ssa_label[]
+    ctx.next_ssa_label[] += 1
+    SyntaxNode(K"SSALabel", val, srcref=srcref)
 end
 
 
@@ -245,6 +43,9 @@ function blockify(ex)
     kind(ex) == K"block" ? ex : SyntaxNode(K"block", ex, [ex])
 end
 
+function expand_assignment(ctx, ex)
+end
+
 function expand_forms(ctx, ex)
     k = kind(ex)
     if k == K"while"
@@ -260,10 +61,12 @@ function expand_forms(ctx, ex)
                 ])
             ])
         ])
-
     elseif !haschildren(ex)
         ex
     else
+        if k == K"=" && (numchildren(ex) != 2 && kind(ex[1]) != K"Identifier")
+            error("TODO")
+        end
         SyntaxNode(head(ex), map(e->expand_forms(ctx,e), children(ex)), srcref=ex)
     end
 end
@@ -276,37 +79,162 @@ function decl_var(ex)
 end
 
 function is_underscore(ex)
-    valueof(ex) == :_
+    k = kind(ex)
+    return (k == K"Identifier" && valueof(ex) == :_) ||
+           (k == K"var" && valueof(ex[1]) == :_)
 end
 
-# NB: This only works after expand_forms has already processed assignments.
-function find_assigned_vars(vars, ex)
-    k = kind(ex)
-    if !haschildren(ex) || is_quoted(k) || k in KSet"lambda scope_block module toplevel"
-        return
-    elseif k == K"method"
-        error("TODO")
-    elseif k == K"="
-        find_assigned_vars(vars, ex[2])
-        v = decl_var(ex[1])
-        if !(kind(v) in KSet"SSAValue globalref outerref" || is_underscore(ex))
-            push!(vars, v)
-        end
-    else
-        for e in children(ex)
-            find_assigned_vars(vars, e)
+# FIXME: The problem of "what is an identifier" pervades lowering ... we have
+# various things which seem like identifiers:
+#
+# * Identifier (symbol)
+# * K"var" nodes
+# * Operator kinds
+# * Underscore placeholders
+#
+# Can we avoid having the logic of "what is an identifier" repeated by dealing
+# with these during desugaring
+# * Attach an identifier attribute to nodes. If they're an identifier they get this
+# * Or alternatively / more easily, desugar by replacment ??
+function identifier_name(ex)
+    if kind(ex) == K"var"
+        ex = ex[1]
+    end
+    valueof(ex)
+end
+
+function is_valid_name(ex)
+    n = identifier_name(ex)
+    n !== :ccall && n !== :cglobal
+end
+
+function _schedule_traverse(stack, e::SyntaxNode)
+    push!(stack, e)
+    return nothing
+end
+function _schedule_traverse(stack, es::Union{Tuple,Vector})
+    append!(stack, es)
+    return nothing
+end
+
+function traverse_ast(f, ex)
+    todo = [ex]
+    while !isempty(todo)
+        e1 = pop!(todo)
+        f(e1, e->_schedule_traverse(todo, e))
+    end
+end
+
+function find_in_ast(f, ex)
+    todo = [ex]
+    while !isempty(todo)
+        e1 = pop!(todo)
+        res = f(e1, e->_schedule_traverse(todo, e))
+        if !isnothing(res)
+            return res
         end
     end
-    return vars
+    return nothing
 end
 
+# NB: This only really works after expand_forms has already processed assignments.
 function find_assigned_vars(ex)
-    vars = []
-    find_assigned_vars(vars, ex)
+    vars = SyntaxNode[]
+    # _find_assigned_vars(vars, ex)
+    traverse_ast(ex) do e, traverse
+        k = kind(e)
+        if !haschildren(e) || is_quoted(k) || k in KSet"lambda scope_block module toplevel"
+            return
+        elseif k == K"method"
+            error("TODO")
+            return nothing
+        elseif k == K"="
+            v = decl_var(e[1])
+            if !(kind(v) in KSet"SSALabel globalref outerref" || is_underscore(e))
+                push!(vars, v)
+            end
+            traverse(e[2])
+        else
+            traverse(children(e))
+        end
+    end
     return unique(vars)
 end
 
+function find_decls(decl_kind, ex)
+    vars = SyntaxNode[]
+    traverse_ast(ex) do e, traverse
+        k = kind(e)
+        if !haschildren(e) || is_quoted(k) || k in KSet"lambda scope_block module toplevel"
+            return
+        elseif k == decl_kind
+            if !is_underscore(e[1])
+                push!(vars, decl_var(e[1]))
+            end
+        else
+            traverse(children(e))
+        end
+    end
+end
+
+# Determine whether decl_kind is in the scope of `ex`
+#
+# flisp: find-scope-decl
+function has_scope_decl(decl_kind, ex)
+    find_in_ast(ex) do e, traverse
+        k = kind(e)
+        if !haschildren(e) || is_quoted(k) || k in KSet"lambda scope_block module toplevel"
+            return
+        elseif k == decl_kind
+            return e
+        else
+            traverse(children(ex))
+        end
+    end
+end
+
+struct LambdaLocals
+    # For resolve-scopes pass
+    locals::Set{Symbol}
+end
+
+struct LambdaVars
+    # For analyze-variables pass
+    # var_info_lst::Set{Tuple{Symbol,Symbol}} # ish?
+    # captured_var_infos ??
+    # ssalabels::Set{SSALabel}
+    # static_params::Set{Symbol}
+end
+
+# TODO:
+# 1. Use `.val` to store LambdaVars/LambdaLocals/ScopeInfo
+# 2. Incorporate hygenic-scope here so we always have a parent scope when
+#    processing variables rather than putting them into a thunk (??)
+
+struct ScopeInfo
+    lambda_vars::Union{LambdaLocals,LambdaVars}
+    parent::Union{Nothing,ScopeInfo}
+    args::Set{Symbol}
+    locals::Set{Symbol}
+    globals::Set{Symbol}
+    static_params::Set{Symbol}
+    renames::Dict{Symbol,Symbol}
+    implicit_globals::Set{Symbol}
+    warn_vars::Set{Symbol}
+    is_soft::Bool
+    is_hard::Bool
+    table::Dict{Symbol,Any}
+end
+
+# Transform lambdas from
+#   (lambda (args ...) body)
+# to the form
+#   (lambda (args...) (locals...) body)
+function resolve_scopes_(ctx, scope, ex)
+end
+
 function resolve_scopes(ctx, ex)
+    resolve_scopes_(ctx, scope, ex)
 end
 
 #-------------------------------------------------------------------------------
