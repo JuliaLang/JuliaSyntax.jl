@@ -930,7 +930,7 @@ const _kind_names =
         "noinline"
         "loopinfo"
         # Identifier for a value which is only assigned once ("SSA value")
-        "SSAValue"
+        "SSALabel"
         # Scope expressions `(hygienic_scope ex s)` mean `ex` should be
         # interpreted as being in scope `s`.
         "hygienic_scope"
@@ -1161,7 +1161,7 @@ is_block_continuation_keyword(k::Kind) = K"BEGIN_BLOCK_CONTINUATION_KEYWORDS" <=
 is_literal(k::Kind) = K"BEGIN_LITERAL" <= k <= K"END_LITERAL"
 is_operator(k::Kind) = K"BEGIN_OPS" <= k <= K"END_OPS"
 is_word_operator(k::Kind) = (k == K"in" || k == K"isa" || k == K"where")
-is_identifier(k::Kind) = (k == K"Identifier" || k == K"var") || is_macro_name(k)
+is_identifier(k::Kind) = k == K"Identifier" || k == K"var" || is_operator(k) || is_macro_name(k)
 
 is_contextual_keyword(k) = is_contextual_keyword(kind(k))
 is_error(k) = is_error(kind(k))
