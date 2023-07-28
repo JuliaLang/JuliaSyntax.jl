@@ -952,6 +952,8 @@ tests = [
         "public export=true foo, bar"                   => PARSE_ERROR # but these may be
         "public experimental=true foo, bar"             => PARSE_ERROR # supported soon ;)
         "public(x::String) = false"                     => "(= (call public (::-i x String)) false)"
+        "module M; export @a; macro a end; end"         => "(module M (block (export @a) (macro a)))"
+        "module M; public @a; macro a end; end"         => "(module M (block (public @a) (macro a)))"
     ],
     JuliaSyntax.parse_docstring => [
         """ "notdoc" ]        """ => "(string \"notdoc\")"
