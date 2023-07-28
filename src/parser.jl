@@ -506,11 +506,16 @@ end
 #
 # flisp: syntax added after flisp implementation stopped being maintained
 function parse_public(ps::ParseState)
-    if peek(ps) == K"public" && peek(ps, 2) == K"Identifier"
-        parse_resword(ps)
-    else
-        parse_docstring(ps)
+    if ps.stream.version >= (1, 11) && peek(ps) == K"public"
+        if peek(ps, 2) ∈ KSet"( = ["
+            # this branch is for compatibility with use of public as a non-keyword.
+            # it should be removed at some point.
+            emit_diagnostic(ps, warning="using public as an identifier is deprecated")
+        else
+            return parse_resword(ps)
+        end
     end
+    parse_docstring(ps)
 end
 
 # Parse docstrings attached by a space or single newline

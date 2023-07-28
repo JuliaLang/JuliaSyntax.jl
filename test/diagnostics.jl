@@ -127,8 +127,14 @@ end
         Diagnostic(10, 13, :warning, "parentheses are not required here")
     @test diagnostic("export (x)") ==
         Diagnostic(8, 10, :warning, "parentheses are not required here")
-    @test diagnostic("export :x") == 
+    @test diagnostic("export :x") ==
         Diagnostic(8, 9, :error, "expected identifier")
+    @test diagnostic("public = 4") ==
+        Diagnostic(8, 9, :warning, "using public as an identifier is deprecated")
+    @test diagnostic("public[7] = 5") ==
+        Diagnostic(8, 9, :warning, "using public as an identifier is deprecated")
+    @test diagnostic("public() = 6") ==
+        Diagnostic(8, 9, :warning, "using public as an identifier is deprecated")
 end
 
 @testset "diagnostics for literal parsing" begin

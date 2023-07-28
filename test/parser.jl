@@ -956,6 +956,9 @@ tests = [
         "module M; public @a; end"                      => "(module M (block (public @a)))"
         "module M; export ⤈; end"                       => "(module M (block (export ⤈)))"
         "module M; public ⤈; end"                       => "(module M (block (public ⤈)))"
+        "public = 4"                                    => "(= public 4)"
+        "public[7] = 5"                                 => "(= (ref public 7) 5)"
+        "public() = 6"                                  => "(= (call public) 6)"
     ],
     JuliaSyntax.parse_docstring => [
         """ "notdoc" ]        """ => "(string \"notdoc\")"
