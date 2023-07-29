@@ -31,6 +31,8 @@ end
 
 const PARSE_ERROR = r"\(error-t "
 
+with_version(v::VersionNumber, (i,o)::Pair) = ((;v), i) => o
+
 # TODO:
 # * Extract the following test cases from the source itself.
 # * Use only the green tree to generate the S-expressions
@@ -940,7 +942,7 @@ tests = [
         "10.0e1000'"  =>  "(ErrorNumericOverflow)"
         "10.0f100'"   =>  "(ErrorNumericOverflow)"
     ],
-    JuliaSyntax.parse_stmts => [
+    JuliaSyntax.parse_stmts => with_version.(v"1.11", [
         "function f(public)\n    public + 3\nend"       => "(function (call f public) (block (call-i public + 3)))"
         "public A, B"                                   => "(public A B)"
         "if true \n public *= 4 \n end"                 => "(if true (block (*= public 4)))"
@@ -959,7 +961,7 @@ tests = [
         "public = 4"                                    => "(= public 4)"
         "public[7] = 5"                                 => "(= (ref public 7) 5)"
         "public() = 6"                                  => "(= (call public) 6)"
-    ],
+    ]),
     JuliaSyntax.parse_docstring => [
         """ "notdoc" ]        """ => "(string \"notdoc\")"
         """ "notdoc" \n]      """ => "(string \"notdoc\")"

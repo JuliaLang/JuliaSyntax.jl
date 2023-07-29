@@ -130,11 +130,9 @@ end
     @test diagnostic("export :x") ==
         Diagnostic(8, 9, :error, "expected identifier")
     @test diagnostic("public = 4") ==
-        Diagnostic(8, 9, :warning, "using public as an identifier is deprecated")
-    @test diagnostic("public[7] = 5") ==
-        Diagnostic(8, 9, :warning, "using public as an identifier is deprecated")
-    @test diagnostic("public() = 6") ==
-        Diagnostic(8, 9, :warning, "using public as an identifier is deprecated")
+        diagnostic("public[7] = 5") ==
+        diagnostic("public() = 6") ==
+        Diagnostic(1, 6, :warning, "using public as an identifier is deprecated")
 end
 
 @testset "diagnostics for literal parsing" begin
