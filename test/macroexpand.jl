@@ -113,6 +113,19 @@ function bad_macro_invocation(case)
     end
 end
 
+macro letx(arg)
+    quote
+        let x = 42
+            $arg, x
+        end
+    end
+end
+
+let x = 84
+    y = @letx x
+    #@info "" y
+end
+
 end
 
 @testset "macroexpand" begin
