@@ -31,7 +31,7 @@ end
 
 const PARSE_ERROR = r"\(error-t "
 
-with_version(v::VersionNumber, (i,o)::Pair) = ((;v), i) => o
+with_version(v::VersionNumber, (i,o)::Pair) = ((;v=v), i) => o
 
 # TODO:
 # * Extract the following test cases from the source itself.
