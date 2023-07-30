@@ -499,12 +499,11 @@ function parse_stmts(ps::ParseState)
     end
 end
 
-# Parse `public foo, bar` at the toplevel
+# Parse `public foo, bar`
 #
-# separate from parse_resword so that public is only a keyword at the toplevel
-# caller is responsible for ensuring this is only called at the toplevel
-#
-# flisp: syntax added after flisp implementation stopped being maintained
+# We *only* call this from toplevel contexts (file and module level) for
+# compatibility. In the future we should probably make public a full fledged
+# keyword like `export`.
 function parse_public(ps::ParseState)
     if ps.stream.version >= (1, 11) && peek(ps) == K"public"
         if peek(ps, 2) ∈ KSet"( = ["
