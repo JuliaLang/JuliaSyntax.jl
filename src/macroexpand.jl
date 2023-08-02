@@ -13,11 +13,13 @@ end
 # But it's also not nice because we need to reallocate that whole part of the
 # tree and we wouldn't later be able to use a compressed GreenNode inside a
 # lazy tree to store those parts of the AST...
+#
+# TODO: Maybe rename to just `Syntax`?
 struct SyntaxLiteral
-    scope::ScopeSpec
+    scope::Union{Nothing,ScopeSpec}
     tree::SyntaxNode
 
-    function SyntaxLiteral(scope::ScopeSpec, tree::SyntaxNode)
+    function SyntaxLiteral(scope::Union{Nothing,ScopeSpec}, tree::SyntaxNode)
         while kind(tree) == K"hygienic_scope"
             scope = valueof(tree[2])
             tree = tree[1]
@@ -25,6 +27,22 @@ struct SyntaxLiteral
         return new(scope, tree)
     end
 end
+
+function SyntaxLiteral(h::Union{Kind,SyntaxHead}, srcref::SyntaxLiteral, children)
+    # There's no meaning We don't care about the scope here right? Right??
+    s1 = first(children).scope
+    if all(c.scope == s1 for c in children)
+        SyntaxLiteral(s1, SyntaxNode(h, srcref.tree, [c.tree for c in children]))
+    else
+        SyntaxLiteral(nothing, SyntaxNode(h, srcref.tree, [SyntaxNode(c) for c in children]))
+    end
+end
+
+function SyntaxLiteral(h::Union{Kind,SyntaxHead}, scope::Union{Nothing,ScopeSpec},
+                       srcref::SyntaxLiteral, val)
+    SyntaxLiteral(scope, SyntaxNode(h, srcref.tree, val))
+end
+
 
 function Base.iterate(ex::SyntaxLiteral)
     if numchildren(ex) == 0
@@ -45,6 +63,8 @@ end
 children(ex::SyntaxLiteral) = (SyntaxLiteral(ex.scope, c) for c in children(ex.tree))
 haschildren(ex::SyntaxLiteral) = haschildren(ex.tree)
 numchildren(ex::SyntaxLiteral) = numchildren(ex.tree)
+
+Base.range(ex::SyntaxLiteral) = range(ex.tree)
 
 function child(ex::SyntaxLiteral, path::Int...)
     # Somewhat awkward way to prevent macros from ever seeing the special
@@ -84,7 +104,13 @@ function Base.getindex(ex::SyntaxLiteral)
 end
 
 function Base.show(io::IO, mime::MIME"text/plain", ex::SyntaxLiteral)
-    print(io, "SyntaxLiteral in scope $(ex.scope):\n")
+    print(io, "SyntaxLiteral")
+    if !isnothing(ex.scope)
+        print(io, " in ", ex.scope.mod, " ", ex.scope.is_global ? "macro" : "macrocall", " scope")
+    else
+        print(io, " without scope")
+    end
+    print(io, ":\n")
     show(io, mime, ex.tree)
 end
 
@@ -94,12 +120,16 @@ function _syntax_literal(scope, expr)
 end
 
 function SyntaxNode(ex::SyntaxLiteral)
-    SyntaxNode(K"hygienic_scope", ex.tree, [ex.tree, SyntaxNode(K"Value", ex.scope)])
+    if isnothing(ex.scope)
+        ex.tree
+    else
+        SyntaxNode(K"hygienic_scope", ex.tree, [ex.tree, SyntaxNode(K"Value", ex.scope)])
+    end
 end
 
 struct MacroContext
     macroname::SyntaxNode
-    var"module"::Module
+    mod::Module
     # TODO: For warnings, we could have a diagnostics field here in the macro
     # context too? Or maybe macros could just use @warn for that?
 end
@@ -111,10 +141,10 @@ struct MacroExpansionError
     diagnostics::Diagnostics
 end
 
-function MacroExpansionError(context::MacroContext,
-        ex::Union{SyntaxNode,SyntaxLiteral}, msg::String)
+function MacroExpansionError(context::Union{Nothing,MacroContext},
+        ex::Union{SyntaxNode,SyntaxLiteral}, msg::String; kws...)
     diagnostics = Diagnostics()
-    emit_diagnostic(diagnostics, ex, error=msg)
+    emit_diagnostic(diagnostics, ex; error=msg, kws...)
     MacroExpansionError(context, diagnostics)
 end
 
@@ -122,10 +152,8 @@ function MacroExpansionError(diagnostics::Diagnostics)
     MacroExpansionError(nothing, diagnostics)
 end
 
-function MacroExpansionError(ex::Union{SyntaxNode,SyntaxLiteral}, msg::String)
-    diagnostics = Diagnostics()
-    emit_diagnostic(diagnostics, ex, error=msg)
-    MacroExpansionError(diagnostics)
+function MacroExpansionError(ex::Union{SyntaxNode,SyntaxLiteral}, msg::String; kws...)
+    MacroExpansionError(nothing, ex, msg; kws...)
 end
 
 function Base.showerror(io::IO, exc::MacroExpansionError)
@@ -133,20 +161,26 @@ function Base.showerror(io::IO, exc::MacroExpansionError)
     ctx = exc.context
     if !isnothing(ctx)
         print(io, " while expanding ", ctx.macroname,
-              " in module ", ctx.module)
+              " in module ", ctx.mod)
     end
     print(io, ":\n")
     show_diagnostics(io, exc.diagnostics)
 end
 
-function emit_diagnostic(diagnostics::Diagnostics, ex::SyntaxNode; kws...)
+function emit_diagnostic(diagnostics::Diagnostics, ex::SyntaxNode; before=false, after=false, kws...)
     # TODO: Do we really want this diagnostic representation? Source ranges are
     # flexible, but it seems we loose something by not keeping the offending
     # expression `ex` somewhere?
     #
     # An alternative could be to allow diagnostic variants TextDiagnostic and
     # TreeDiagnostic or something?
-    diagnostic = Diagnostic(first_byte(ex), last_byte(ex); kws...)
+    r = range(ex)
+    if before
+        r = first(r):first(r)-1
+    elseif after
+        r = last(r)+1:last(r)
+    end
+    diagnostic = Diagnostic(first(r), last(r); kws...)
     push!(diagnostics, (ex.source, diagnostic))
 end
 
@@ -157,18 +191,18 @@ end
 #-------------------------------------------------------------------------------
 
 function _make_syntax_node(scope, srcref, children...)
+    same_scope = all(!(c isa SyntaxLiteral) || c.scope == scope for c in children)
     cs = SyntaxNode[]
     for c in children
-        if c isa SyntaxNode
-            push!(cs, c)
-        elseif c isa SyntaxLiteral
-            push!(cs, SyntaxNode(c))
+        if c isa SyntaxLiteral
+            push!(cs, same_scope ? c.tree : SyntaxNode(c))
         else
-            push!(cs, SyntaxNode(K"Value", c, c))
+            push!(cs, SyntaxNode(K"Value", srcref, c))
         end
     end
     sr = srcref isa SyntaxLiteral ? srcref.tree : srcref
-    SyntaxLiteral(scope, SyntaxNode(head(srcref), sr, cs))
+    h = kind(srcref) == K"$" ? SyntaxHead(K"Value") : head(srcref)
+    SyntaxLiteral(scope, SyntaxNode(h, sr, cs))
 end
 
 function contains_active_interp(ex, depth)
@@ -211,13 +245,12 @@ function expand_quasiquote_content(mod, ex, depth)
         end
     end
 
-    call_args = SyntaxNode[
-        SyntaxNode(K"Value", _make_syntax_node;    srcref=ex),
-        SyntaxNode(K"Value", ScopeSpec(mod, true); srcref=ex),
-        SyntaxNode(K"Value", ex;                   srcref=ex),
+    return SyntaxNode(K"call", ex, SyntaxNode[
+        SyntaxNode(K"Value", ex, _make_syntax_node),
+        SyntaxNode(K"Value", ex, ScopeSpec(mod, true)),
+        SyntaxNode(K"Value", ex, ex),
         expanded_children...
-    ]
-    return SyntaxNode(K"call", call_args, srcref=ex)
+    ])
 end
 
 function expand_quasiquote(mod, ex)
@@ -226,7 +259,13 @@ function expand_quasiquote(mod, ex)
             # TODO: Don't throw here - provide diagnostics instead
             error("`...` expression outside of call")
         else
-            return ex[1]
+            r = SyntaxNode(K"call", ex, SyntaxNode[
+                    SyntaxNode(K"Value", ex, _make_syntax_node),
+                    SyntaxNode(K"Value", ex, ScopeSpec(mod, true)),
+                    SyntaxNode(K"Value", ex, ex),
+                    ex[1]
+                ])
+            return r
         end
     end
     expand_quasiquote_content(mod, ex, 0)
@@ -243,7 +282,7 @@ function needs_expansion(ex)
     end
 end
 
-function macroexpand(mod, ex)
+function macroexpand(mod::Module, ex::SyntaxNode)
     k = kind(ex)
     if !haschildren(ex) || k == K"inert" || k == K"module" || k == K"meta"
         return ex
@@ -285,6 +324,10 @@ function macroexpand(mod, ex)
     else
         return SyntaxNode(head(ex), ex, [macroexpand(mod, c) for c in children(ex)])
     end
+end
+
+function macroexpand(ex::SyntaxLiteral)
+    macroexpand(ex.scope.mod, ex.tree)
 end
 
 #-------------------------------------------------------------------------------
@@ -329,7 +372,7 @@ end
 
 # Insert Expr(:esc) expressions to escape any `(scope ex nothing)` expressions
 # to the outer containing scope.
-function _insert_scope_escapes!(ex, depth)
+function _fix_scopes!(ex, depth)
     if !(ex isa Expr)
         return ex
     end
@@ -338,7 +381,7 @@ function _insert_scope_escapes!(ex, depth)
         scope = ex.args[2]
         if scope.is_global
             return Expr(Symbol("hygienic-scope"),
-                        _insert_scope_escapes!(ex.args[1], depth + 1),
+                        _fix_scopes!(ex.args[1], depth + 1),
                         scope.mod)
         else
             x = ex.args[1]
@@ -348,13 +391,13 @@ function _insert_scope_escapes!(ex, depth)
             return x
         end
     else
-        map!(e->_insert_scope_escapes!(e, depth), ex.args, ex.args)
+        map!(e->_fix_scopes!(e, depth), ex.args, ex.args)
         return ex
     end
 end
 
 function expand(::Type{Expr}, mod, ex)
-    _insert_scope_escapes!(Expr(expand(mod, ex)), 0)
+    _fix_scopes!(Expr(expand(mod, ex)), 0)
 end
 
 #-------------------------------------------------------------------------------
@@ -372,9 +415,10 @@ end
 
 function eval2(mod, ex::SyntaxNode)
     k = kind(ex)
+    result = nothing
     if k == K"toplevel"
         for e in children(ex)
-            eval2(mod, e)
+            result = eval2(mod, e)
         end
     elseif k == K"module"
         std_imports = !has_flags(ex, BARE_MODULE_FLAG)
@@ -390,7 +434,7 @@ function eval2(mod, ex::SyntaxNode)
         first_stmt = 1
         if !isempty(stmts) && kind(stmts[1]) == K"macrocall" &&
                 valueof(stmts[1][1]) == Symbol("@__EXTENSIONS__")
-            eval2(newmod, stmts[1])
+            result = eval2(newmod, stmts[1])
             first_stmt += 1
             if get_extension(newmod, :new_macros, false) && std_imports
                 # Override include() for the module
@@ -398,7 +442,7 @@ function eval2(mod, ex::SyntaxNode)
             end
         end
         for e in stmts[first_stmt:end]
-            eval2(newmod, e)
+            result = eval2(newmod, e)
         end
     else
         if get_extension(mod, :new_macros, false)
@@ -411,8 +455,9 @@ function eval2(mod, ex::SyntaxNode)
         else
             e = Expr(ex)
         end
-        Base.eval(mod, e)
+        result = Base.eval(mod, e)
     end
+    return result
 end
 
 function eval2(ex::SyntaxLiteral)
@@ -441,6 +486,16 @@ end
 
 _extensions_var = Symbol("##__EXTENSIONS__")
 
+function set_extension(mod::Module; kws...)
+    if !isdefined(mod, _extensions_var)
+        Base.eval(mod, :(const $(_extensions_var) = $(Dict{Symbol,Any}())))
+    end
+    d = getfield(mod, _extensions_var)
+    for kv in kws
+        push!(d, kv)
+    end
+end
+
 function get_extension(mod::Module, key::Symbol, default=nothing)
     while true
         if isdefined(mod, _extensions_var)
@@ -466,10 +521,9 @@ macro __EXTENSIONS__(exs...)
     for e in exs
         @assert Meta.isexpr(e, :(=), 2)
         @assert e.args[1] isa Symbol
-        push!(kvs, Expr(:call, :(=>), QuoteNode(e.args[1]), esc(e.args[2])))
+        push!(kvs, Expr(:kw, e.args[1], esc(e.args[2])))
     end
-    # TODO: Might this better expand to `Expr(:meta)` if module extensions were
-    # supported in the runtime?
-    :(const $(esc(_extensions_var)) = Dict{Symbol,Any}($(kvs...)))
+    # TODO: Expand to an `Expr(:meta)` in the future?
+    :(set_extension(@__MODULE__(), $(kvs...)))
 end
 

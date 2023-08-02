@@ -6,7 +6,7 @@ module LocationMacros
     using JuliaSyntax
 
     macro __MODULE__()
-        __context__.module
+        __context__.mod
     end
 
     macro __FILE__()
@@ -121,9 +121,8 @@ macro letx(arg)
     end
 end
 
-let x = 84
-    y = @letx x
-    #@info "" y
+y = let x = 84
+    @letx x
 end
 
 end
@@ -145,4 +144,6 @@ end
     @test_throws JuliaSyntax.MacroExpansionError A.eval(A.bad_macro_invocation(1))
     @test_throws JuliaSyntax.MacroExpansionError A.eval(A.bad_macro_invocation(2))
     @test_throws JuliaSyntax.MacroExpansionError A.eval(A.bad_macro_invocation(3))
+
+    @test A.y == (84, 42)
 end
