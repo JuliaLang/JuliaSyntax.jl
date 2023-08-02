@@ -75,6 +75,47 @@ function SyntaxData(kind::Kind, val::Any; kws...)
     SyntaxData(SyntaxHead(kind, EMPTY_FLAGS), val; kws...)
 end
 
+# Design musings
+#
+# getproperty overloading for virtual fields
+#
+# Yeeeah this is a very inefficient way to do it. It asks a lot of the compiler
+# to elide all the branches here. *Especially* eliding the branch on the kind
+# seems difficult.
+# Pattern matching ftw tbh
+#
+# function Base.getproperty(node::SyntaxNode, name::Symbol)
+#     # Uuugh yea we can't have this (fixme).  Maybe virtual underscore-named fields?
+#     name === :parent   && return getfield(node, :parent)
+#     name === :children && return getfield(node, :children)
+#     name === :head     && return getfield(node, :data).head
+#     name === :source   && return getfield(node, :data).source
+#     name === :raw      && return getfield(node, :data).raw
+#     name === :position && return getfield(node, :data).position
+#     name === :val      && return getfield(node, :data).val
+#
+#     h = head(node)
+#     k = kind(node)
+#     if name === :name
+#         if k == K"call"
+#             if is_infix_op_call(h) || is_postfix_op_call(h)
+#                 node[2]
+#             else
+#                 node[1]
+#             end
+#         end
+#     elseif name === :args
+#     end
+# end
+#
+# Could SyntaxNode be a sum type? And if it were, could we have it as optimal
+# as it currently is? Weell... it'd probably be less optimal because things
+# like the try node have many children. So the sizeof the sum type would be
+# quite large.  Also trivia really fucks us over and we can't use sum types for
+# GreenNode at the very least.
+#
+# getproperty though, maybe?
+
 """
     SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead};
                keep_parens=false, position::Integer=1)
