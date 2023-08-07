@@ -125,6 +125,12 @@ y = let x = 84
     @letx x
 end
 
+JuliaSyntax.include2(@__MODULE__, "macroexpand_ccall.jl")
+
+function call_strlen(str)
+    CCall.@ccall strlen(str::Cstring)::Csize_t
+end
+
 end
 
 @testset "macroexpand" begin
@@ -146,4 +152,9 @@ end
     @test_throws JuliaSyntax.MacroExpansionError A.eval(A.bad_macro_invocation(3))
 
     @test A.y == (84, 42)
+
+    # FIXME: Cannot call CCall.@ccall directly from here without opting into
+    # new macro expansion. Need some Base hooks for reimplementing include() to
+    # make the opt-in more subtle and well integrated.
+    @test A.call_strlen("ab - cd") == 7
 end

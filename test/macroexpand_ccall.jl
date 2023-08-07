@@ -24,7 +24,7 @@ function ccall_macro_parse(ex)
         elseif kf == K"$"
             f
         elseif is_identifier(kf)
-            SyntaxLiteral(K"quote", f, [f])
+            SyntaxLiteral(K"inert", f, [f])
         else
             throw(MacroExpansionError(f,
                 "Function name must be a symbol like `foo`, a library and function name like `libc.printf` or an interpolated function pointer like `\$ptr`"))
@@ -67,7 +67,7 @@ function ccall_macro_parse(ex)
 end
 
 function ccall_macro_lower(ex, convention, func, rettype, types, args, num_varargs)
-    check_ptr = ()
+    statements = SyntaxLiteral[]
     if kind(func) == K"$"
         check = quote
             func = $(func[1])
@@ -77,33 +77,49 @@ function ccall_macro_lower(ex, convention, func, rettype, types, args, num_varar
             end
         end
         func = check[1][1]
-        check_ptr = (check,)
+        push!(statements, check)
     end
 
-    roots = :(tuple($([:(Base.cconvert($t, $a)) for (t, a) in zip(types, args)]...)))
-    cargs = :(tuple($([:(Base.unsafe_convert($t, roots[$i])) for (i, t) in enumerate(types)]...)))
-    foreigncall = SyntaxLiteral(K"foreigncall", 
-                                ex,
-                                (rettype,
-                                 :(Core.svec($(types...))),
-                                 :($num_varargs),
-                                 # TODO: use @SyntaxLiteral here??
-                                 :($convention),
-                                 :(roots...), :(cargs...)))
-    #@info "" foreigncall
+    roots = SyntaxLiteral[]
+    cargs = SyntaxLiteral[]
+    for (i, (type, arg)) in enumerate(zip(types, args))
+        # FIXME: Need utility function for identifiers, which are no longer
+        # plain symbols? Or can we upgrade interpolation code to detect this
+        # case and attribute them to the interpolation location?
+        #     argi = @Identifier("arg$i")
+        #     argi = Identifier(@__MODULE__, "arg$i")
+        # Which means Symbol("arg$i") with the current module ??
+        argi = Symbol("arg$i")
+        # TODO: Can we use SSAValue here? Lowering can do this ... but
+        # presumably that implies some invariants?
+        push!(statements, :(local $argi = Base.cconvert($type, $arg)))
+        push!(roots, :($argi))
+        push!(cargs, :(Base.unsafe_convert($type, $argi)))
+    end
+    push!(statements, SyntaxLiteral(K"foreigncall", 
+                                    ex,
+                                    SyntaxLiteral[func,
+                                     rettype,
+                                     :(Core.svec($(types...))),
+                                     :($num_varargs),
+                                     # TODO: Gosh constructing this quoted
+                                     # symbol was too hard to get correct. We
+                                     # need something better.
+                                     SyntaxLiteral(K"inert", ex, [:($convention)]),
+                                     cargs...,
+                                     roots...
+                                    ]))
     quote
-        $(check_ptr...)
-        roots = $roots
-        cargs = $cargs
-        $foreigncall
+        $(statements...)
     end
 end
 
-macro ccall2(ex)
+macro ccall(ex)
     ccall_macro_lower(ex, Symbol("ccall"), ccall_macro_parse(ex)...)
 end
 
-ex = JuliaSyntax.macroexpand(:(CCall.@ccall2 foo(x::Int, y::Float64)::UInt8))
+# @ccall printf("%s = %d\n"::Cstring; "var"::Cstring, 42::Cint)::Cint
+# nothing
 
 end
 

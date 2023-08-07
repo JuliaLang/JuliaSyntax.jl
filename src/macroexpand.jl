@@ -29,8 +29,13 @@ struct SyntaxLiteral
 end
 
 function SyntaxLiteral(h::Union{Kind,SyntaxHead}, srcref::SyntaxLiteral, children)
-    # There's no meaning We don't care about the scope here right? Right??
+    # TODO: We don't care about the scope here right? Right??
+    # - It's ultimately only the identifiers which need scope recorded?
     s1 = first(children).scope
+    # TODO: This assumes all `children` are of type SyntaxLiteral.
+    # But in reality, we'd, presumably, like to put plain literals and
+    # identifiers in here? In which case, the scope does matter because we'll
+    # be passing it to the children.
     if all(c.scope == s1 for c in children)
         SyntaxLiteral(s1, SyntaxNode(h, srcref.tree, [c.tree for c in children]))
     else
@@ -189,20 +194,31 @@ function emit_diagnostic(diagnostics::Diagnostics, ex::SyntaxLiteral; kws...)
 end
 
 #-------------------------------------------------------------------------------
+function _wrap_interpolation(parent_scope, parent_ex, x)
+    if x isa SyntaxLiteral
+        x.scope == parent_scope ? x.tree : SyntaxNode(x)
+    elseif x isa Symbol
+        # Presume that plain Symbols are variable names in the scope
+        # they're interpolated into. These exist in `scope` so don't depend
+        # on `same_scope`.
+        SyntaxNode(K"Identifier", parent_ex, x)
+    else
+        SyntaxNode(K"Value", parent_ex, x)
+    end
+end
 
 function _make_syntax_node(scope, srcref, children...)
-    same_scope = all(!(c isa SyntaxLiteral) || c.scope == scope for c in children)
+    if kind(srcref) == K"$"
+        # Special case for interpolations without a parent as in :($x)
+        @assert length(children) == 1
+        return SyntaxLiteral(scope, _wrap_interpolation(scope, srcref, children[1]))
+    end
     cs = SyntaxNode[]
     for c in children
-        if c isa SyntaxLiteral
-            push!(cs, same_scope ? c.tree : SyntaxNode(c))
-        else
-            push!(cs, SyntaxNode(K"Value", srcref, c))
-        end
+        push!(cs, _wrap_interpolation(scope, srcref, c))
     end
     sr = srcref isa SyntaxLiteral ? srcref.tree : srcref
-    h = kind(srcref) == K"$" ? SyntaxHead(K"Value") : head(srcref)
-    SyntaxLiteral(scope, SyntaxNode(h, sr, cs))
+    SyntaxLiteral(scope, SyntaxNode(head(srcref), sr, cs))
 end
 
 function contains_active_interp(ex, depth)
