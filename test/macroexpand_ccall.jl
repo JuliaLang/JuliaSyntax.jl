@@ -20,7 +20,7 @@ function ccall_macro_parse(ex)
     # get the function symbols
     func = let f = call[1], kf = kind(f)
         if kf == K"."
-            (f[2], f[1])
+            :((:($$(f[2])), $(f[1])))
         elseif kf == K"$"
             f
         elseif is_identifier(kf)
