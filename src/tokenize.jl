@@ -11,12 +11,60 @@ import ..JuliaSyntax: kind,
 # Character-based predicates for tokenization
 import Base.Unicode
 
+function _char_in_set_expr(varname, firstchars)
+    codes = sort!(UInt32.(unique(firstchars)))
+    terms = []
+    i = 1
+    while i <= length(codes)
+        j = i
+        while j < length(codes) && codes[j+1] == codes[j]+1
+            j += 1
+        end
+        if i == j
+            push!(terms, :($varname == $(codes[i])))
+        else
+            push!(terms, :($(codes[i]) <= $varname <= $(codes[j])))
+        end
+        i = j+1
+    end
+    foldr((t1,t2)->:($t1 || $t2), terms)
+end
+
 const EOF_CHAR = typemax(Char)
 
-function is_identifier_char(c::Char)
+# \ue805 to \ue817 are additional superscripts and subscripts which don't exist
+# within unicode but have been added to the JuliaMono unicode private use area
+const _JuliaMono_sufficies = [
+    '\ue805' # 
+    '\ue806' # 
+    '\ue807' # 
+    '\ue808' # 
+    '\ue809' # 
+    '\ue80a' # 
+    '\ue80b' # 
+    '\ue80c' # 
+    '\ue80d' # 
+    '\ue80e' # 
+    '\ue80f' # 
+    '\ue810' # 
+    '\ue811' # 
+    '\ue812' # 
+    '\ue813' # 
+    '\ue814' # 
+    '\ue815' # 
+    '\ue816' # 
+    '\ue817' # 
+]
+
+@eval function is_identifier_char(c::Char)
     c == EOF_CHAR && return false
     isvalid(c) || return false
-    return Base.is_id_char(c)
+
+    if Base.is_id_char(c)
+        return true
+    end
+    u = UInt32(c)
+    return $(_char_in_set_expr(:u, _JuliaMono_sufficies))
 end
 
 function is_identifier_start_char(c::Char)
@@ -96,25 +144,6 @@ function _nondot_symbolic_operator_kinds()
     ])
 end
 
-function _char_in_set_expr(varname, firstchars)
-    codes = sort!(UInt32.(unique(firstchars)))
-    terms = []
-    i = 1
-    while i <= length(codes)
-        j = i
-        while j < length(codes) && codes[j+1] == codes[j]+1
-            j += 1
-        end
-        if i == j
-            push!(terms, :($varname == $(codes[i])))
-        else
-            push!(terms, :($(codes[i]) <= $varname <= $(codes[j])))
-        end
-        i = j+1
-    end
-    foldr((t1,t2)->:($t1 || $t2), terms)
-end
-
 @eval function is_operator_start_char(c)
    if c == EOF_CHAR || !isvalid(c)
        return false
@@ -145,7 +174,8 @@ end
     end
     # Additional allowed cases
     return $(_char_in_set_expr(:u,
-        collect("²³¹ʰʲʳʷʸˡˢˣᴬᴮᴰᴱᴳᴴᴵᴶᴷᴸᴹᴺᴼᴾᴿᵀᵁᵂᵃᵇᵈᵉᵍᵏᵐᵒᵖᵗᵘᵛᵝᵞᵟᵠᵡᵢᵣᵤᵥᵦᵧᵨᵩᵪᶜᶠᶥᶦᶫᶰᶸᶻᶿ′″‴‵‶‷⁗⁰ⁱ⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₕₖₗₘₙₚₛₜⱼⱽꜛꜜꜝ")))
+        [collect("²³¹ʰʲʳʷʸˡˢˣᴬᴮᴰᴱᴳᴴᴵᴶᴷᴸᴹᴺᴼᴾᴿᵀᵁᵂᵃᵇᵈᵉᵍᵏᵐᵒᵖᵗᵘᵛᵝᵞᵟᵠᵡᵢᵣᵤᵥᵦᵧᵨᵩᵪᶜᶠᶥᶦᶫᶰᶸᶻᶿ′″‴‵‶‷⁗⁰ⁱ⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₕₖₗₘₙₚₛₜⱼⱽꜛꜜꜝ");
+         _JuliaMono_sufficies]))
 end
 
 function optakessuffix(k)
