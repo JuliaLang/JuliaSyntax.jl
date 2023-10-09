@@ -484,10 +484,10 @@ function _next_token(l::Lexer, c)
         return lex_whitespace(l, c)
     elseif is_identifier_start_char(c)
         return lex_identifier(l, c)
-    elseif c == '"'
-￼        return lex_quote(l);
     elseif isdigit(c)
-        return lex_digit(l, K"Integer") 
+        return lex_digit(l, K"Integer")
+    elseif c == '"'
+        return lex_quote(l)
     elseif c == '+'
         return lex_plus(l)
     elseif c == '-'
