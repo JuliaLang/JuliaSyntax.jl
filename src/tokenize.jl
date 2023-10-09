@@ -479,11 +479,13 @@ function _next_token(l::Lexer, c)
     elseif c == '}'
         return emit(l, K"}")
     elseif c == '~'
-        return emit(l, K"~")
+        return emit(l, K"~")   
     elseif iswhitespace(c)
         return lex_whitespace(l, c)
     elseif is_identifier_start_char(c)
         return lex_identifier(l, c)
+    elseif c == '"'
+￼        return lex_quote(l);
     elseif isdigit(c)
         return lex_digit(l, K"Integer") 
     elseif c == '+'
