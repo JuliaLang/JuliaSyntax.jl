@@ -482,16 +482,16 @@ function _next_token(l::Lexer, c)
         return emit(l, K"~")
     elseif iswhitespace(c)
         return lex_whitespace(l, c)
+    elseif is_identifier_start_char(c)
+        return lex_identifier(l, c)
+    elseif isdigit(c)
+        return lex_digit(l, K"Integer") 
     elseif c == '+'
         return lex_plus(l)
     elseif c == '-'
         return lex_minus(l)
     elseif c == '−' # \minus '−' treated as hyphen '-'
         return emit(l, accept(l, '=') ? K"-=" : K"-")
-    elseif is_identifier_start_char(c)
-        return lex_identifier(l, c)
-    elseif isdigit(c)
-        return lex_digit(l, K"Integer")
     elseif c == '='
         return lex_equal(l)
     elseif c == '#'
@@ -530,8 +530,6 @@ function _next_token(l::Lexer, c)
         return lex_dollar(l)
     elseif c == '⊻'
         return lex_xor(l)
-    elseif c == '~'
-        return emit(l, K"~")
     elseif c == EOF_CHAR
         return emit(l, K"EndMarker")
     elseif (k = get(_unicode_ops, c, K"error")) != K"error"
