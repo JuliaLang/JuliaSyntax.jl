@@ -458,42 +458,34 @@ function next_token(l::Lexer, start = true)
 end
 
 function _next_token(l::Lexer, c)
-    if c == EOF_CHAR
-        return emit(l, K"EndMarker")
-    elseif iswhitespace(c)
-        return lex_whitespace(l, c)
-    elseif c == '['
+    if c == '['
         return emit(l, K"[")
     elseif c == ']'
         return emit(l, K"]")
-    elseif c == '{'
-        return emit(l, K"{")
-    elseif c == ';'
-        return emit(l, K";")
-    elseif c == '}'
-        return emit(l, K"}")
     elseif c == '('
         return emit(l, K"(")
     elseif c == ')'
         return emit(l, K")")
+    elseif c == ';'
+        return emit(l, K";")
     elseif c == ','
         return emit(l, K",")
-    elseif c == '*'
-        return lex_star(l);
-    elseif c == '^'
-        return lex_circumflex(l);
-    elseif c == '@'
-        return emit(l, K"@")
-    elseif c == '?'
-        return emit(l, K"?")
-    elseif c == '$'
-        return lex_dollar(l);
-    elseif c == '⊻'
-        return lex_xor(l);
-    elseif c == '~'
-        return emit(l, K"~")
-    elseif c == '#'
-        return lex_comment(l)
+    elseif c == '+'
+        return lex_plus(l);
+    elseif c == '-'
+        return lex_minus(l)
+    elseif c == '−' # \minus '−' treated as hyphen '-'
+        return emit(l, accept(l, '=') ? K"-=" : K"-")
+    elseif c == '{'
+        return emit(l, K"{")
+    elseif c == '}'
+        return emit(l, K"}")
+    elseif c == '"'
+        return lex_quote(l);
+    elseif c == '|'
+        return lex_bar(l)
+    elseif c == '&'
+        return lex_amper(l)
     elseif c == '='
         return lex_equal(l)
     elseif c == '!'
@@ -502,38 +494,49 @@ function _next_token(l::Lexer, c)
         return lex_greater(l)
     elseif c == '<'
         return lex_less(l)
+    elseif c == '"'
+        return lex_quote(l)
+    elseif c == '#'
+        return lex_comment(l)
     elseif c == ':'
         return lex_colon(l)
-    elseif c == '|'
-        return lex_bar(l)
-    elseif c == '&'
-        return lex_amper(l)
+    elseif c == '%'
+        return lex_percent(l)
+    elseif c == '/'
+        return lex_forwardslash(l)
+    elseif c == '\\'
+        return lex_backslash(l)
+    elseif c == '.'
+        return lex_dot(l)
+    elseif c == '`'
+        return lex_backtick(l)
     elseif c == '\''
         return lex_prime(l)
     elseif c == '÷'
         return lex_division(l)
-    elseif c == '"'
-        return lex_quote(l);
-    elseif c == '%'
-        return lex_percent(l);
-    elseif c == '/'
-        return lex_forwardslash(l);
-    elseif c == '\\'
-        return lex_backslash(l);
-    elseif c == '.'
-        return lex_dot(l);
-    elseif c == '+'
-        return lex_plus(l);
-    elseif c == '-'
-        return lex_minus(l);
-    elseif c == '−' # \minus '−' treated as hyphen '-'
-        return emit(l, accept(l, '=') ? K"-=" : K"-")
-    elseif c == '`'
-        return lex_backtick(l);
+
+    elseif iswhitespace(c)
+        return lex_whitespace(l, c)
     elseif is_identifier_start_char(c)
         return lex_identifier(l, c)
     elseif isdigit(c)
         return lex_digit(l, K"Integer")
+    elseif c == '*'
+        return lex_star(l)
+    elseif c == '^'
+        return lex_circumflex(l)
+    elseif c == '@'
+        return emit(l, K"@")
+    elseif c == '?'
+        return emit(l, K"?")
+    elseif c == '$'
+        return lex_dollar(l)
+    elseif c == '⊻'
+        return lex_xor(l)
+    elseif c == '~'
+        return emit(l, K"~")
+    elseif c == EOF_CHAR
+        return emit(l, K"EndMarker")
     elseif (k = get(_unicode_ops, c, K"error")) != K"error"
         return emit(l, k)
     else
