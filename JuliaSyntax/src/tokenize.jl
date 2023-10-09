@@ -225,7 +225,7 @@ end
 
 @inline ishex(c::Char) = isdigit(c) || ('a' <= c <= 'f') || ('A' <= c <= 'F')
 @inline isbinary(c::Char) = c == '0' || c == '1'
-@inline isoctal(c::Char) =  '0' ≤ c ≤ '7'
+@inline isoctal(c::Char) = '0' ≤ c ≤ '7'
 @inline iswhitespace(c::Char) = (isvalid(c) && Base.isspace(c)) || c === '\ufeff'
 
 struct StringState
@@ -480,8 +480,6 @@ function _next_token(l::Lexer, c)
         return emit(l, K"{")
     elseif c == '}'
         return emit(l, K"}")
-    elseif c == '"'
-        return lex_quote(l);
     elseif c == '|'
         return lex_bar(l)
     elseif c == '&'
@@ -494,8 +492,6 @@ function _next_token(l::Lexer, c)
         return lex_greater(l)
     elseif c == '<'
         return lex_less(l)
-    elseif c == '"'
-        return lex_quote(l)
     elseif c == '#'
         return lex_comment(l)
     elseif c == ':'
@@ -514,7 +510,6 @@ function _next_token(l::Lexer, c)
         return lex_prime(l)
     elseif c == '÷'
         return lex_division(l)
-
     elseif iswhitespace(c)
         return lex_whitespace(l, c)
     elseif is_identifier_start_char(c)
