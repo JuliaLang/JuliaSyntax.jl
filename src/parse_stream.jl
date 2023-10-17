@@ -81,6 +81,8 @@ struct SyntaxHead
     flags::RawFlags
 end
 
+SyntaxHead(k::Kind) = SyntaxHead(k, EMPTY_FLAGS)
+
 kind(head::SyntaxHead) = head.kind
 
 """

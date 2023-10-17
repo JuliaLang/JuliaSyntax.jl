@@ -516,7 +516,8 @@ end
 
 function _to_expr(node::SyntaxNode)
     if !haschildren(node)
-        offset, txtbuf = _unsafe_wrap_substring(sourcetext(node.source))
+        offset, txtbuf = isnothing(node.source) ? (0,nothing) :
+                         _unsafe_wrap_substring(sourcetext(node.source))
         return _leaf_to_Expr(node.source, txtbuf, head(node), range(node) .+ offset, node)
     end
     cs = children(node)

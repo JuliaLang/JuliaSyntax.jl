@@ -3,6 +3,15 @@
 
 abstract type AbstractSyntaxData end
 
+# TODO:
+#
+# Investigate attributes in ECS form and immutable trees.
+# Key advantages of immutable trees:
+#   * Leaves are stored inline
+#   * No need for to ever do "copyast"
+# Key advantages of ECS:
+#   * Multiple attributes without changing the concrete data structure
+
 mutable struct TreeNode{NodeData}   # ? prevent others from using this with NodeData <: AbstractSyntaxData?
     parent::Union{Nothing,TreeNode{NodeData}}
     children::Union{Nothing,Vector{TreeNode{NodeData}}}
@@ -37,12 +46,75 @@ end
 
 const AbstractSyntaxNode = TreeNode{<:AbstractSyntaxData}
 
+# There's two ways this can arise:
+# 1. From parsing a source file.
+# 2. Programmatically
 struct SyntaxData <: AbstractSyntaxData
-    source::SourceFile
-    raw::GreenNode{SyntaxHead}
+    head::SyntaxHead
+    source::Union{Nothing,SourceFile}
+    raw::Union{Nothing,GreenNode{SyntaxHead}}
     position::Int
     val::Any
 end
+
+function SyntaxData(source::SourceFile, raw::GreenNode{SyntaxHead},
+                    position::Int, val::Any)
+    SyntaxData(head(raw), source, raw, position, val)
+end
+
+# SyntaxData constructed "in code"
+function SyntaxData(head::SyntaxHead, val::Any; srcref=nothing)
+    if isnothing(srcref)
+        SyntaxData(head, nothing, nothing, 0, val)
+    else
+        SyntaxData(head, srcref.source, srcref.raw, srcref.position, val)
+    end
+end
+
+function SyntaxData(kind::Kind, val::Any; kws...)
+    SyntaxData(SyntaxHead(kind, EMPTY_FLAGS), val; kws...)
+end
+
+# Design musings
+#
+# getproperty overloading for virtual fields
+#
+# Yeeeah this is a very inefficient way to do it. It asks a lot of the compiler
+# to elide all the branches here. *Especially* eliding the branch on the kind
+# seems difficult.
+# Pattern matching ftw tbh
+#
+# function Base.getproperty(node::SyntaxNode, name::Symbol)
+#     # Uuugh yea we can't have this (fixme).  Maybe virtual underscore-named fields?
+#     name === :parent   && return getfield(node, :parent)
+#     name === :children && return getfield(node, :children)
+#     name === :head     && return getfield(node, :data).head
+#     name === :source   && return getfield(node, :data).source
+#     name === :raw      && return getfield(node, :data).raw
+#     name === :position && return getfield(node, :data).position
+#     name === :val      && return getfield(node, :data).val
+#
+#     h = head(node)
+#     k = kind(node)
+#     if name === :name
+#         if k == K"call"
+#             if is_infix_op_call(h) || is_postfix_op_call(h)
+#                 node[2]
+#             else
+#                 node[1]
+#             end
+#         end
+#     elseif name === :args
+#     end
+# end
+#
+# Could SyntaxNode be a sum type? And if it were, could we have it as optimal
+# as it currently is? Weell... it'd probably be less optimal because things
+# like the try node have many children. So the sizeof the sum type would be
+# quite large.  Also trivia really fucks us over and we can't use sum types for
+# GreenNode at the very least.
+#
+# getproperty though, maybe?
 
 """
     SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead};
@@ -58,6 +130,25 @@ struct ErrorVal
 end
 
 Base.show(io::IO, ::ErrorVal) = printstyled(io, "✘", color=:light_red)
+
+function SyntaxNode(head::Union{Kind,SyntaxHead}, children::Vector{SyntaxNode};
+                    srcref=nothing)
+    SyntaxNode(nothing, children, SyntaxData(head, nothing; srcref=srcref))
+end
+
+function SyntaxNode(head::Union{Kind,SyntaxHead}, val::Any;
+                    srcref=nothing)
+    SyntaxNode(nothing, nothing, SyntaxData(head, val; srcref=srcref))
+end
+
+function SyntaxNode(head::Union{Kind,SyntaxHead}, srcref::SyntaxNode,
+                    children::Vector{SyntaxNode})
+    SyntaxNode(nothing, children, SyntaxData(head, nothing; srcref=srcref))
+end
+
+function SyntaxNode(head::Union{Kind,SyntaxHead}, srcref::SyntaxNode, val::Any)
+    SyntaxNode(nothing, nothing, SyntaxData(head, val; srcref=srcref))
+end
 
 function SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead};
                     keep_parens=false, position::Integer=1)
@@ -103,6 +194,7 @@ end
 
 haschildren(node::TreeNode) = node.children !== nothing
 children(node::TreeNode) = (c = node.children; return c === nothing ? () : c)
+numchildren(node::TreeNode) = (isnothing(node.children) ? 0 : length(node.children))
 
 
 """
@@ -111,12 +203,26 @@ children(node::TreeNode) = (c = node.children; return c === nothing ? () : c)
 Get the [`SyntaxHead`](@ref) of a node of a tree or other syntax-related data
 structure.
 """
-head(node::AbstractSyntaxNode) = head(node.raw)
+head(node::AbstractSyntaxNode) = head(node.data)
 
-span(node::AbstractSyntaxNode) = span(node.raw)
+span(node::AbstractSyntaxNode) = span(node.data)
 
-first_byte(node::AbstractSyntaxNode) = node.position
-last_byte(node::AbstractSyntaxNode)  = node.position + span(node) - 1
+first_byte(node::AbstractSyntaxNode) = first_byte(node.data)
+last_byte(node::AbstractSyntaxNode)  = last_byte(node.data)
+
+
+# TODO: Deprecate these as they rely on the field names of AbstractSyntaxData?
+head(data::AbstractSyntaxData) = head(data.raw)
+span(data::AbstractSyntaxData) = span(data.raw)
+first_byte(data::AbstractSyntaxData) = data.position
+last_byte(data::AbstractSyntaxData)  = data.position + span(data) - 1
+source_line(data::AbstractSyntaxData) = source_line(data.source, data.position)
+source_location(data::AbstractSyntaxData) = source_location(data.source, data.position)
+
+head(data::SyntaxData) = data.head
+span(data::SyntaxData) = isnothing(data.raw) ? 0 : span(data.raw)
+first_byte(data::SyntaxData) = data.position
+last_byte(data::SyntaxData)  = data.position + span(data) - 1
 
 """
     sourcetext(node)
@@ -131,18 +237,23 @@ function Base.range(node::AbstractSyntaxNode)
     (node.position-1) .+ (1:span(node))
 end
 
-source_line(node::AbstractSyntaxNode) = source_line(node.source, node.position)
-source_location(node::AbstractSyntaxNode) = source_location(node.source, node.position)
+source_line(node::AbstractSyntaxNode) = source_line(node.data)
+source_location(node::AbstractSyntaxNode) = source_location(node.data)
 
-function interpolate_literal(node::SyntaxNode, val)
-    @assert kind(node) == K"$"
-    SyntaxNode(node.source, node.raw, node.position, node.parent, true, val)
+filename(node::AbstractSyntaxNode) = filename(node.data)
+function filename(data::SyntaxData)
+    isnothing(data.source) ? "" : data.source.filename
+end
+
+function source_location(data::SyntaxData)
+    return isnothing(data.source) ? (0,0) :
+           source_location(data.source, data.position)
 end
 
 function _show_syntax_node(io, current_filename, node::AbstractSyntaxNode,
                            indent, show_byte_offsets)
-    fname = node.source.filename
-    line, col = source_location(node.source, node.position)
+    fname = filename(node)
+    line, col = source_location(node)
     posstr = "$(lpad(line, 4)):$(rpad(col,3))│"
     if show_byte_offsets
         posstr *= "$(lpad(first_byte(node),6)):$(rpad(last_byte(node),6))│"
@@ -220,7 +331,7 @@ function Base.copy(node::TreeNode)
 end
 
 # shallow-copy the data
-Base.copy(data::SyntaxData) = SyntaxData(data.source, data.raw, data.position, data.val)
+Base.copy(data::SyntaxData) = SyntaxData(data.head, data.source, data.raw, data.position, data.val)
 
 function build_tree(::Type{SyntaxNode}, stream::ParseStream;
                     filename=nothing, first_line=1, keep_parens=false, kws...)

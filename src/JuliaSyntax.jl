@@ -41,6 +41,9 @@ include("green_tree.jl")
 include("syntax_tree.jl")
 include("expr.jl")
 
+include("macroexpand.jl")
+include("lowering.jl")
+
 # Hooks to integrate the parser with Base
 include("hooks.jl")
 include("precompile.jl")

@@ -42,6 +42,8 @@ last_byte(d::Diagnostic)  = d.last_byte
 is_error(d::Diagnostic)   = d.level === :error
 Base.range(d::Diagnostic) = first_byte(d):last_byte(d)
 
+const Diagnostics = Vector{Tuple{SourceFile,Diagnostic}}
+
 # Make relative path into a file URL
 function _file_url(filename)
     @static if Sys.iswindows()
@@ -78,13 +80,17 @@ function show_diagnostic(io::IO, diagnostic::Diagnostic, source::SourceFile)
               context_lines_before=1, context_lines_after=0)
 end
 
-function show_diagnostics(io::IO, diagnostics::AbstractVector{Diagnostic}, source::SourceFile)
+function show_diagnostics(io::IO, diagnostics::Diagnostics)
     first = true
-    for d in diagnostics
+    for (s,d) in diagnostics
         first || println(io)
         first = false
-        show_diagnostic(io, d, source)
+        show_diagnostic(io, d, s)
     end
+end
+
+function show_diagnostics(io::IO, diagnostics::AbstractVector{Diagnostic}, source::SourceFile)
+    show_diagnostics(io, collect(zip(Iterators.repeated(source), diagnostics)))
 end
 
 function show_diagnostics(io::IO, diagnostics::AbstractVector{Diagnostic}, text::AbstractString)
