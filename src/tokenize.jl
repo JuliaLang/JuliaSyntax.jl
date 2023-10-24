@@ -1287,10 +1287,20 @@ const MAX_KW_LENGTH = 10
 function lex_identifier(l::Lexer, c)
     h = simple_hash(c, UInt64(0))
     n = 1
+    graphemestate = Ref(zero(Int32))
+    graphemestate_peek = Ref(zero(Int32))
     while true
         pc, ppc = dpeekchar(l)
-        if (pc == '!' && ppc == '=') || !is_identifier_char(pc)
-            break
+        if Unicode.isgraphemebreak!(graphemestate, c, pc)
+            if (pc == '!' && ppc == '=') || !is_identifier_char(pc)
+                break
+            end
+        elseif pc == '\u200d' # ZWJ control character
+            # ZWJ only allowed within emoji sequences, not at end
+            graphemestate_peek[] = graphemestate[]
+            if Unicode.isgraphemebreak!(graphemestate_peek, pc, ppc)
+                break
+            end
         end
         c = readchar(l)
         h = simple_hash(c, h)

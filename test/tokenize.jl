@@ -44,12 +44,12 @@ end
 end # testset
 
 @testset "tokenize unicode" begin
-    str = "𝘋 =2β"
+    str = "𝘋 =2🏳️‍🌈"
     for s in [str, IOBuffer(str)]
         l = tokenize(s)
         kinds = [K"Identifier", K"Whitespace", K"=",
                  K"Integer", K"Identifier", K"EndMarker"]
-        token_strs = ["𝘋", " ", "=", "2", "β", ""]
+        token_strs = ["𝘋", " ", "=", "2", "🏳️‍🌈", ""]
         for (i, n) in enumerate(l)
             @test kind(n) == kinds[i]
             @test untokenize(n, str)  == token_strs[i]
