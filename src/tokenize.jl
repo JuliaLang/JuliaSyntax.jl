@@ -1295,8 +1295,8 @@ function lex_identifier(l::Lexer, c)
             if (pc == '!' && ppc == '=') || !is_identifier_char(pc)
                 break
             end
-        elseif pc == '\u200d' # ZWJ control character
-            # ZWJ only allowed within emoji sequences, not at end
+        elseif pc in ('\u200c','\u200d') # ZWNJ/ZWJ control characters
+            # ZWJ/ZWNJ only within grapheme sequences, not at end
             graphemestate_peek[] = graphemestate[]
             if Unicode.isgraphemebreak!(graphemestate_peek, pc, ppc)
                 break
