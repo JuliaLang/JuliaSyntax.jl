@@ -44,12 +44,13 @@ end
 end # testset
 
 @testset "tokenize unicode" begin
-    str = "𝘋 =2🏳️‍🌈"
+    emoji = VERSION < v"1.5" ? "😄" : "🏳️‍🌈" # requires newer Unicode
+    str = "𝘋 =2"*emoji
     for s in [str, IOBuffer(str)]
         l = tokenize(s)
         kinds = [K"Identifier", K"Whitespace", K"=",
                  K"Integer", K"Identifier", K"EndMarker"]
-        token_strs = ["𝘋", " ", "=", "2", "🏳️‍🌈", ""]
+        token_strs = ["𝘋", " ", "=", "2", emoji, ""]
         for (i, n) in enumerate(l)
             @test kind(n) == kinds[i]
             @test untokenize(n, str)  == token_strs[i]
