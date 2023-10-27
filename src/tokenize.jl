@@ -1284,7 +1284,7 @@ function lex_backtick(l::Lexer)
 end
 
 const MAX_KW_LENGTH = 10
-const ascii_is_identifier_char::Vector{Bool} = map(is_identifier_char ∘ Char, 0x00:0x7f)
+const ascii_is_identifier_char = Bool[is_identifier_char(Char(b)) for b=0x00:0x7f]
 function lex_identifier(l::Lexer, c)
     h = simple_hash(c, UInt64(0))
     n = 1
