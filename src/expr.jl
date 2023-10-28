@@ -266,14 +266,15 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         # Move parameters blocks to args[2]
         _reorder_parameters!(args, 2)
         if headsym === :dotcall
+            startsym = args[1]
             if is_prefix_call(head)
                 headsym = :.
-                args = Any[args[1], Expr(:tuple, args[2:end]...)]
-            else
+                args = Any[startsym, Expr(:tuple, args[2:end]...)]
+            elseif startsym isa Symbol
                 # operator calls
                 headsym = :call
-                args[1] = Symbol(".", args[1])
-            end
+                args[1] = Symbol(:., startsym)
+            end # else startsym could be an Expr(:error), just propagate it
         end
         if do_lambda isa Expr
             return Expr(:do, Expr(headsym, args...), do_lambda)
