@@ -466,7 +466,7 @@
 
         # Issue #341
         @test parsestmt("f(./x)", ignore_errors=true) == Expr(:call, :f,
-                                                            Expr(:dotcall,
+                                                            Expr(:call,
                                                                 Expr(:error, Expr(:., :/)),
                                                                 :x))
     end

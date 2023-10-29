@@ -270,11 +270,13 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
             if is_prefix_call(head)
                 headsym = :.
                 args = Any[startsym, Expr(:tuple, args[2:end]...)]
-            elseif startsym isa Symbol
+            else
                 # operator calls
                 headsym = :call
-                args[1] = Symbol(:., startsym)
-            end # else startsym could be an Expr(:error), just propagate it
+                if startsym isa Symbol
+                    args[1] = Symbol(:., startsym)
+                end # else startsym could be an Expr(:error), just propagate it
+            end
         end
         if do_lambda isa Expr
             return Expr(:do, Expr(headsym, args...), do_lambda)
