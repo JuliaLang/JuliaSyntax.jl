@@ -465,10 +465,7 @@
         @test parsestmt("A.:.+")   == Expr(:., :A, QuoteNode(Symbol(".+")))
 
         # Issue #341
-        @test parsestmt("f(./x)", ignore_errors=true) == Expr(:call, :f,
-                                                            Expr(:call,
-                                                                Expr(:error, Expr(:., :/)),
-                                                                :x))
+        @test parsestmt("./x", ignore_errors=true) == Expr(:call, Expr(:error, Expr(:., :/)), :x)
     end
 
     @testset "let" begin
