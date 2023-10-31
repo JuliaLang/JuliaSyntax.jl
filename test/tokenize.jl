@@ -44,7 +44,8 @@ end
 end # testset
 
 @testset "tokenize unicode" begin
-    emoji = VERSION < v"1.5" ? "😄" : "🏳️‍🌈" # requires newer Unicode
+    # FIXME: rm VERSION check once we implement our own is_identifier_char
+    emoji = VERSION < v"1.5" ? "😄" : "\U1F3F3\UFE0F\U200D\U1F308" # 🏳️‍🌈 requires newer Unicode
     str = "𝘋 =2"*emoji
     for s in [str, IOBuffer(str)]
         l = tokenize(s)
