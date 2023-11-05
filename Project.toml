@@ -8,7 +8,7 @@ utf8proc_jll = "00992c89-a35c-5347-9984-e6609dacc59a"
 
 [compat]
 julia = "1.0"
-utf8proc_jll = "2.9" # for Unicode 15.1
+utf8proc_jll = "~2.9" # = 2.9.x for Unicode 15.1
 
 [extras]
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
