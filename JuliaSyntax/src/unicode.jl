@@ -74,7 +74,7 @@ function utf8proc_decompose_julia(str, options, buffer, nwords)
     return ret
 end
 
-function utf8proc_map_julia(str::Union{String,SubString{String}}, options::Integer, chartransform=identity)
+function utf8proc_map_julia(str::Union{String,SubString{String}}, options::Integer)
     nwords = utf8proc_decompose_julia(str, options, C_NULL, 0)
     buffer = Base.StringVector(nwords*4)
     nwords = utf8proc_decompose_julia(str, options, buffer, nwords)
