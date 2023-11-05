@@ -20,6 +20,7 @@ export SyntaxNode
 
 # Helper utilities
 include("utils.jl")
+include("unicode.jl")
 
 include("kinds.jl")
 
