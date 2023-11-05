@@ -155,8 +155,9 @@ end
 
 # from jl_id_start_char in julia/src/flisp/julia_extensions.c
 function is_identifier_start_char(c::Char)
-    if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'
-        return true
+    if isascii(c)
+        a = c % UInt8
+        return (a >= UInt8('A') && a <= UInt8('Z')) || (a >= UInt8('a') && a <= UInt8('z')) || a == UInt8('_')
     end
     if c < Char(0xA1) || !isvalid(c)
         return false
@@ -167,9 +168,10 @@ end
 
 # from jl_id_char in julia/src/flisp/julia_extensions.c
 function is_identifier_char(c::Char)
-    if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' ||
-       (c >= '0' && c <= '9') || c == '!'
-        return true
+    if isascii(c)
+        a = c % UInt8
+        return (a >= UInt8('A') && a <= UInt8('Z')) || (a >= UInt8('a') && a <= UInt8('z')) ||
+               a == UInt8('_') || (a >= UInt8('0') && a <= UInt8('9')) || a == UInt8('!')
     end
     if c < Char(0xA1) || !isvalid(c)
         return false
