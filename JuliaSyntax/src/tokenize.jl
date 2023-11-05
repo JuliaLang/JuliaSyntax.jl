@@ -4,26 +4,15 @@ export tokenize, untokenize
 
 using ..JuliaSyntax: JuliaSyntax, Kind, @K_str, @KSet_str
 
-import ..JuliaSyntax: kind,
+import ..JuliaSyntax: kind, Unicode,
     is_literal, is_error, is_contextual_keyword, is_word_operator
 
 #-------------------------------------------------------------------------------
 # Character-based predicates for tokenization
-import Base.Unicode
 
 const EOF_CHAR = typemax(Char)
 
-function is_identifier_char(c::Char)
-    c == EOF_CHAR && return false
-    isvalid(c) || return false
-    return Base.is_id_char(c)
-end
-
-function is_identifier_start_char(c::Char)
-    c == EOF_CHAR && return false
-    isvalid(c) || return false
-    return Base.is_id_start_char(c)
-end
+using .Unicode: is_identifier_char, is_identifier_start_char
 
 function is_invisible_char(c::Char)
     # These are the chars considered invisible by the reference parser.
@@ -72,7 +61,7 @@ end
 readchar(io::IO) = eof(io) ? EOF_CHAR : read(io, Char)
 
 # Some unicode operators are normalized by the tokenizer into their equivalent
-# kinds. See also normalize_identifier()
+# kinds. See also Unicode.normalize_identifier()
 const _ops_with_unicode_aliases = [
     # \minus '−' is normalized into K"-",
     '−' => K"-"
@@ -137,10 +126,10 @@ end
     if (u < 0xa1 || u > 0x10ffff)
         return false
     end
-    cat = Base.Unicode.category_code(u)
-    if (cat == Base.Unicode.UTF8PROC_CATEGORY_MN ||
-        cat == Base.Unicode.UTF8PROC_CATEGORY_MC ||
-        cat == Base.Unicode.UTF8PROC_CATEGORY_ME)
+    cat = Unicode.category_code(u)
+    if (cat == Unicode.UTF8PROC_CATEGORY_MN ||
+        cat == Unicode.UTF8PROC_CATEGORY_MC ||
+        cat == Unicode.UTF8PROC_CATEGORY_ME)
         return true
     end
     # Additional allowed cases
@@ -226,7 +215,7 @@ end
 @inline ishex(c::Char) = isdigit(c) || ('a' <= c <= 'f') || ('A' <= c <= 'F')
 @inline isbinary(c::Char) = c == '0' || c == '1'
 @inline isoctal(c::Char) =  '0' ≤ c ≤ '7'
-@inline iswhitespace(c::Char) = (isvalid(c) && Base.isspace(c)) || c === '\ufeff'
+@inline iswhitespace(c::Char) = (isvalid(c) && Unicode.isspace(c)) || c === '\ufeff'
 
 struct StringState
     triplestr::Bool
