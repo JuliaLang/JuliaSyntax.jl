@@ -8,6 +8,8 @@ export category_code, normalize_identifier, is_identifier_char, is_identifier_st
 
 using utf8proc_jll: libutf8proc
 
+import ..JuliaSyntax: @u8_str
+
 # these constants have been stable across all utf8proc versions,
 # so no need to redefine them:
 import Base.Unicode: UTF8PROC_CATEGORY_CN, UTF8PROC_CATEGORY_LU, UTF8PROC_CATEGORY_LL, UTF8PROC_CATEGORY_LT, UTF8PROC_CATEGORY_LM, UTF8PROC_CATEGORY_LO, UTF8PROC_CATEGORY_MN, UTF8PROC_CATEGORY_MC, UTF8PROC_CATEGORY_ME, UTF8PROC_CATEGORY_ND, UTF8PROC_CATEGORY_NL, UTF8PROC_CATEGORY_NO, UTF8PROC_CATEGORY_PC, UTF8PROC_CATEGORY_PD, UTF8PROC_CATEGORY_PS, UTF8PROC_CATEGORY_PE, UTF8PROC_CATEGORY_PI, UTF8PROC_CATEGORY_PF, UTF8PROC_CATEGORY_PO, UTF8PROC_CATEGORY_SM, UTF8PROC_CATEGORY_SC, UTF8PROC_CATEGORY_SK, UTF8PROC_CATEGORY_SO, UTF8PROC_CATEGORY_ZS, UTF8PROC_CATEGORY_ZL, UTF8PROC_CATEGORY_ZP, UTF8PROC_CATEGORY_CC, UTF8PROC_CATEGORY_CF, UTF8PROC_CATEGORY_CS, UTF8PROC_CATEGORY_CO
@@ -165,7 +167,7 @@ end
 function is_identifier_start_char(c::Char)
     a = ascii_byte(c)
     if a != 0xff
-        return (a >= UInt8('A') && a <= UInt8('Z')) || (a >= UInt8('a') && a <= UInt8('z')) || a == UInt8('_')
+        return (a >= u8"A" && a <= u8"Z") || (a >= u8"a" && a <= u8"z") || a == u8"_"
     end
     if c < Char(0xA1) || !isvalid(c)
         return false
@@ -178,8 +180,8 @@ end
 function is_identifier_char(c::Char)
     a = ascii_byte(c)
     if a != 0xff
-        return (a >= UInt8('A') && a <= UInt8('Z')) || (a >= UInt8('a') && a <= UInt8('z')) ||
-               a == UInt8('_') || (a >= UInt8('0') && a <= UInt8('9')) || a == UInt8('!')
+        return (a >= u8"A" && a <= u8"Z") || (a >= u8"a" && a <= u8"z") ||
+               a == u8"_" || (a >= u8"0" && a <= u8"9") || a == u8"!"
     end
     if c < Char(0xA1) || !isvalid(c)
         return false
