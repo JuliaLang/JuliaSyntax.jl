@@ -1282,9 +1282,9 @@ function lex_identifier(l::Lexer, c)
     graphemestate_peek = Ref(zero(Int32))
     while true
         pc, ppc = dpeekchar(l)
-        ascii = ascii && isascii(pc)
+        pc_byte = Unicode.ascii_byte(pc)
+        ascii = ascii && pc_byte != 0xff
         if ascii # fast path
-            pc_byte = pc % UInt8
             @inbounds if (pc_byte == UInt8('!') && ppc == '=') || !ascii_is_identifier_char[pc_byte+1]
                 break
             end

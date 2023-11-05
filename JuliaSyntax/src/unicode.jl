@@ -153,10 +153,18 @@ function _is_identifier_start_char(c::UInt32, cat::Integer)
             (c >= 0x1D7CE && c <= 0x1D7E1)) # 𝟎 through 𝟗 (inclusive), 𝟘 through 𝟡 (inclusive)
 end
 
+# utility function to return the ASCII byte if isascii(c),
+# and otherwise (for ASCII or invalid chars) return 0xff,
+# based on the isascii source code.
+@inline function ascii_byte(c::Char)
+    x = bswap(reinterpret(UInt32, c))
+    return x < 0x80 ? x % UInt8 : 0xff
+end
+
 # from jl_id_start_char in julia/src/flisp/julia_extensions.c
 function is_identifier_start_char(c::Char)
-    if isascii(c)
-        a = c % UInt8
+    a = ascii_byte(c)
+    if a != 0xff
         return (a >= UInt8('A') && a <= UInt8('Z')) || (a >= UInt8('a') && a <= UInt8('z')) || a == UInt8('_')
     end
     if c < Char(0xA1) || !isvalid(c)
@@ -168,8 +176,8 @@ end
 
 # from jl_id_char in julia/src/flisp/julia_extensions.c
 function is_identifier_char(c::Char)
-    if isascii(c)
-        a = c % UInt8
+    a = ascii_byte(c)
+    if a != 0xff
         return (a >= UInt8('A') && a <= UInt8('Z')) || (a >= UInt8('a') && a <= UInt8('z')) ||
                a == UInt8('_') || (a >= UInt8('0') && a <= UInt8('9')) || a == UInt8('!')
     end
