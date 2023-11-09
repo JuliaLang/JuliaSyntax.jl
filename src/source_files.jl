@@ -124,7 +124,7 @@ function Base.thisind(source::SourceFile, i::Int)
     thisind(source.code, i - source.byte_offset) + source.byte_offset
 end
 
-function Base.nextind(source::SourceFile, i::Int)
+function Base.nextind(source::SourceFile, i::Integer)
     nextind(source.code, i - source.byte_offset) + source.byte_offset
 end
 
