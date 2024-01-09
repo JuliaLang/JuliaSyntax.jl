@@ -2,7 +2,7 @@
 
 julia_version = "1.10.0"
 manifest_format = "2.0"
-project_hash = "1ae23028e9dee8979192796b73374d269048cd03"
+project_hash = "46b5b82f24e4b5d97afc2843032730b022086b31"
 
 [[deps.ANSIColoredPrinters]]
 git-tree-sha1 = "574baf8110975760d391c710b6341da1afa48d8c"
@@ -87,11 +87,6 @@ deps = ["Dates", "Mmap", "Parsers", "Unicode"]
 git-tree-sha1 = "31e996f0a15c7b280ba9f76636b3ff9e2ae58c9a"
 uuid = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 version = "0.21.4"
-
-[[deps.JuliaSyntax]]
-path = "/home/hyrodium/Git/JuliaSyntax.jl"
-uuid = "70703baa-626e-46a2-a12c-08ffd08c73b4"
-version = "0.4.6"
 
 [[deps.LazilyInitializedFields]]
 git-tree-sha1 = "8f7f3cabab0fd1800699663533b6d5cb3fc0e612"
