@@ -796,11 +796,23 @@ function lex_greater(l::Lexer)
         if accept(l, '>')
             if accept(l, '=')
                 return emit(l, K">>>=")
+            elseif accept(l, '%')
+                if accept(l, '=')
+                    return emit(l, K">>>%=")
+                else
+                    return emit(l, K">>>%")
+                end
             else # >>>?, ? not a =
                 return emit(l, K">>>")
             end
         elseif accept(l, '=')
             return emit(l, K">>=")
+        elseif accept(l, '%')
+            if accept(l, "=")
+                return emit(l, K">>%=")
+            else
+                return emit(l, K">>%")
+            end
         else
             return emit(l, K">>")
         end
@@ -818,6 +830,12 @@ function lex_less(l::Lexer)
     if accept(l, '<')
         if accept(l, '=')
             return emit(l, K"<<=")
+        elseif accept(l, '%')
+            if accept(l, '=')
+                return emit(l, K"<<%=")
+            else
+                return emit(l, K"<<%")
+            end
         else # '<<?', ? not =, ' '
             return emit(l, K"<<")
         end
@@ -909,6 +927,12 @@ function lex_plus(l::Lexer)
         return emit(l, K"++")
     elseif accept(l, '=')
         return emit(l, K"+=")
+    elseif accept(l, '%')
+        if accept(l, '=')
+            return emit(l, K"+%=")
+        else
+            return emit(l, K"+%")
+        end
     end
     return emit(l, K"+")
 end
@@ -924,6 +948,12 @@ function lex_minus(l::Lexer)
         return emit(l, K"->")
     elseif accept(l, '=')
         return emit(l, K"-=")
+    elseif accept(l, '%')
+        if accept(l, '=')
+            return emit(l, K"-%=")
+        else
+            return emit(l, K"-%")
+        end
     end
     return emit(l, K"-")
 end
@@ -933,6 +963,12 @@ function lex_star(l::Lexer)
         return emit(l, K"Error**") # "**" is an invalid operator use ^
     elseif accept(l, '=')
         return emit(l, K"*=")
+    elseif accept(l, '%')
+        if accept(l, '=')
+            return emit(l, K"*%=")
+        else
+            return emit(l, K"*%")
+        end
     end
     return emit(l, K"*")
 end
