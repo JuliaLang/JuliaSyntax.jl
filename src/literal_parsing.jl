@@ -331,7 +331,24 @@ end
 #-------------------------------------------------------------------------------
 # Unicode normalization.
 
-using .Unicode: normalize_identifier
+function normalize_identifier(c::Char)
+    if c <= '~'
+        return c # ASCII common case
+    end
+    return c == '\u025B' ? '\u03B5' : # 'ɛ' => 'ε'
+           c == '\u00B5' ? '\u03BC' : # 'µ' => 'μ'
+           c == '\u00B7' ? '\u22C5' : # '·' => '⋅'
+           c == '\u0387' ? '\u22C5' : # '·' => '⋅'
+           c == '\u2212' ? '\u002D' : # '−' (\minus) => '-'
+           c == '\u210F' ? '\u0127' : # 'ℏ' (\hslash) => 'ħ' \hbar
+           c
+end
+
+function normalize_identifier(str::AbstractString)
+    isascii(str) ? str :
+        UnicodeNext.normalize(str, stable=true, compose=true,
+                              chartransform=normalize_identifier)
+end
 
 #-------------------------------------------------------------------------------
 function parse_julia_literal(txtbuf::Vector{UInt8}, head::SyntaxHead, srcrange)
