@@ -1,5 +1,7 @@
 module JuliaSyntax
 
+using UnicodeNext
+
 # Conservative list of exports - only export the most common/useful things
 # here.
 
@@ -20,7 +22,6 @@ export SyntaxNode
 
 # Helper utilities
 include("utils.jl")
-include("unicode.jl")
 
 include("kinds.jl")
 

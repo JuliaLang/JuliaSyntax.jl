@@ -145,7 +145,7 @@ function _print_marker_line(io, prefix_str, str, underline, singleline, color,
     # Getting exactly the same width of whitespace as `str` is tricky.
     # Especially for mixtures of tabs and spaces.
     # tabs are zero width according to textwidth
-    indent = join(Unicode.isspace(c) ? c : repeat(' ', textwidth(c)) for c in prefix_str)
+    indent = join(UnicodeNext.isspace(c) ? c : repeat(' ', textwidth(c)) for c in prefix_str)
 
     # Assume tabs are 4 wide rather than 0. (fixme: implement tab alignment?)
     w = textwidth(str) + 4*count(c->c=='\t', str)
