@@ -125,12 +125,6 @@ text by calling one of the parser API functions such as [`parseall`](@ref)
 """
 const SyntaxNode = TreeNode{SyntaxData}
 
-# Value of an error node with no children
-struct ErrorVal
-end
-
-Base.show(io::IO, ::ErrorVal) = printstyled(io, "✘", color=:light_red)
-
 function SyntaxNode(head::Union{Kind,SyntaxHead}, children::Vector{SyntaxNode};
                     srcref=nothing)
     SyntaxNode(nothing, children, SyntaxData(head, nothing; srcref=srcref))
