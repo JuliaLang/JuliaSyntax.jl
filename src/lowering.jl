@@ -2,24 +2,416 @@
 # non-type-related compiler passes)
 
 #-------------------------------------------------------------------------------
-# Utilities
+# Syntax graph prototype 1
+#
+# - connectivity managed in linked data structure
+# - flexible property lists
+# - "graph" but practically a forest of trees, with this invariant upheld by
+#   the algorithms used.
+#
+# Problems:
+# - Weirdly intermingled GC: prop list needs manual cleanup if part of our
+#   linked data structure of nodes goes out of scope
+# - Some inefficiencies of linked data structures (derefs) without "benefits" (O(1)
+#   mutation, GC integration)
 
-struct ExpansionContext
-    next_ssa_label::Ref{Int}
+# struct SyntaxNode2
+#     head::SyntaxHead
+#     id::Int
+#     children::Union{Nothing,Vector{SyntaxNode2}}
+# end
+#
+# function haschildren(node::SyntaxNode2)
+#     return !isnothing(node.children)
+# end
+#
+# function children(node::SyntaxNode2)
+#     return isnothing(children) ? () : node.children
+# end
+#
+# function head(node::SyntaxNode2)
+#     return node.head
+# end
+#
+# struct SyntaxTree # {Attrs} TODO: Code field names/types into here instead
+#     root::SyntaxNode2
+#     props::Dict{Symbol,Any}
+# end
+#
+# SyntaxTree(root::SyntaxNode2) = SyntaxTree(root, Dict{Symbol,Any}())
+#
+# function children(tree::SyntaxTree)
+#     (SyntaxTree(c, tree.props) for c in children(tree.root))
+# end
+#
+# function child(tree::SyntaxTree, i::Integer)
+#     SyntaxTree(child(tree.root, i), tree.props)
+# end
+#
+# function add_prop!(tree::SyntaxTree, prop::Pair{Symbol,T}) where {T<:Type}
+#     name, type = prop
+#     @assert !haskey(tree.props, name)
+#     tree.props[name] = Dict{Int,type}()
+#     tree
+# end
+#
+# function _convert_nodes(node, next_id, positions, green_trees, sources, values)
+#     h = head(node)
+#     id = next_id[]
+#     next_id[] += 1
+#     positions[id] = node.position
+#     if haschildren(node)
+#         values[id] = node.val
+#     end
+#     # FIXME: remove `isnothing()` check if reverting Unions in SyntaxData
+#     let r = node.raw
+#         !isnothing(r) && (green_trees[id] = r)
+#     end
+#     let s = node.source
+#         !isnothing(s) && (sources[id] = s)
+#     end
+#     cs = map(children(node)) do n
+#         _convert_nodes(n, next_id, positions, green_trees, sources, values)
+#     end
+#     SyntaxNode2(h, id, cs == () ? nothing : cs)
+# end
+#
+# function SyntaxTree(root::SyntaxNode)
+#     next_id = Ref(1)
+#     positions = Dict{Int, Int}()
+#     green_trees = Dict{Int, GreenNode}()
+#     sources = Dict{Int, SourceFile}()
+#     values = Dict{Int, Any}()
+#     root2 = _convert_nodes(root, next_id, positions, green_trees, sources, values)
+#     props = Dict{Symbol,Any}(:source_pos => positions,
+#                              :green_tree => green_trees,
+#                              :source => sources,
+#                              :value => values)
+#     SyntaxTree(root2, props)
+# end
+#
+# function Base.getproperty(tree::SyntaxTree, name::Symbol)
+#     # FIXME: Remove access to internals
+#     name === :root && return getfield(tree, :root)
+#     name === :props && return getfield(tree, :props)
+#     name === :head && return head(getfield(tree, :root))
+#     getfield(tree, :props)[name][getfield(tree, :root).id]
+# end
+#
+# function Base.propertynames(tree::SyntaxTree)
+#     names = collect(keys(tree.props))
+#     push!(names, :head)
+# end
+#
+# function head(tree::SyntaxTree)
+#     head(tree.root)
+# end
+#
+# # Pattern here seems amenable to
+# # 1) Construct a named tuple of name=>property. This avoids the outer dict
+# #    lookup in the inner loop.
+# # 2) Pass that into the traversal
+# #
+#
+# function _show_syntax_node_2(io, current_filename, node, props, indent)
+#     id = node.id
+#     fname = filename(props.source[id])
+#     line, col = source_location(props.source[id], props.position[id])
+#     posstr = "$(lpad(line, 4)):$(rpad(col,3))│"
+#     val = props.value[id]
+#     nodestr = haschildren(node) ? "[$(untokenize(head(node)))]" :
+#               isa(val, Symbol) ? string(val) : repr(val)
+#     treestr = string(indent, nodestr)
+#     # Add filename if it's changed from the previous node
+#     if fname != current_filename[]
+#         #println(io, "# ", fname)
+#         treestr = string(rpad(treestr, 40), "│$fname")
+#         current_filename[] = fname
+#     end
+#     println(io, posstr, treestr)
+#     if haschildren(node)
+#         new_indent = indent*"  "
+#         for n in children(node)
+#             _show_syntax_node_2(io, current_filename, n, props, new_indent)
+#         end
+#     end
+# end
+#
+# function Base.show(io::IO, ::MIME"text/plain", tree::SyntaxTree)
+#     println(io, "line:col│ tree                                   │ file_name")
+#     props = (source   = tree.props[:source],
+#              position = tree.props[:source_pos],
+#              value    = tree.props[:value])
+#     _show_syntax_node_2(io, Ref{Union{Nothing,String}}(nothing), tree.root,
+#                         props, "")
+# end
+
+#-------------------------------------------------------------------------------
+# Syntax graph prototype 2
+#
+# - Fully deconstructed graph
+struct SyntaxGraph
+    edge_ranges::Vector{UnitRange{Int}}
+    edges::Vector{Int}
+    attributes::Dict{Symbol,Any}
 end
 
-ExpansionContext() = ExpansionContext(Ref(0))
+SyntaxGraph() = SyntaxGraph(Vector{UnitRange{Int}}(), Vector{Int}(), Dict{Symbol,Any}())
+
+function Base.show(io::IO, ::MIME"text/plain", graph::SyntaxGraph)
+    print(io, SyntaxGraph,
+          " with $(length(graph.edge_ranges)) vertices, $(length(graph.edges)) edges, and attributes:\n")
+    show(io, MIME("text/plain"), graph.attributes)
+end
+
+function ensure_attributes!(graph::SyntaxGraph; kws...)
+    for (k,v) in pairs(kws)
+        @assert k isa Symbol
+        @assert v isa Type
+        if haskey(graph.attributes, k)
+            v0 = valtype(graph.attributes[k])
+            v == v0 || throw(ErrorException("Attribute type mismatch $v != $v0"))
+        else
+            graph.attributes[k] = Dict{Int,v}()
+        end
+    end
+end
+
+function newnode!(graph::SyntaxGraph)
+    push!(graph.edge_ranges, 1:0)
+    return length(graph.edge_ranges)
+end
+
+function setchildren!(graph::SyntaxGraph, id, children::Integer...)
+    setchildren!(graph, id, children)
+end
+
+function setchildren!(graph::SyntaxGraph, id, children)
+    n = length(graph.edges)
+    graph.edge_ranges[id] = n+1:(n+length(children))
+    # TODO: Reuse existing edges if possible
+    append!(graph.edges, children)
+end
+
+function haschildren(graph::SyntaxGraph, id)
+    length(graph.edge_ranges[id]) > 0
+end
+
+function numchildren(graph::SyntaxGraph, id)
+    length(graph.edge_ranges[id])
+end
+
+function children(graph::SyntaxGraph, id)
+    @view graph.edges[graph.edge_ranges[id]]
+end
+
+function child(graph::SyntaxGraph, id::Int, i::Integer)
+    graph.edges[graph.edge_ranges[id][i]]
+end
+
+# FIXME: Probably terribly non-inferrable?
+function setattr!(graph::SyntaxGraph, id; attrs...)
+    for (k,v) in pairs(attrs)
+        graph.attributes[k][id] = v
+    end
+end
+
+function Base.getproperty(graph::SyntaxGraph, name::Symbol)
+    # FIXME: Remove access to internals
+    name === :edge_ranges && return getfield(graph, :edge_ranges)
+    name === :edges       && return getfield(graph, :edges)
+    name === :attributes  && return getfield(graph, :attributes)
+    return getfield(graph, :attributes)[name]
+end
+
+function Base.get(graph::SyntaxGraph, name::Symbol, default)
+    get(getfield(graph, :attributes), name, default)
+end
+
+function _convert_nodes(graph::SyntaxGraph, node::SyntaxNode)
+    id = newnode!(graph)
+    graph.head[id] = head(node)
+    # FIXME: Decide on API here which isn't terribly inefficient
+    graph.source_pos[id] = node.position
+    # setattr!(graph, id, source_pos=node.position)
+    if !isnothing(node.val)
+        setattr!(graph, id, value=node.val)
+    end
+    # FIXME: remove `isnothing()` check if reverting Unions in SyntaxData
+    let r = node.raw
+        !isnothing(r) && (setattr!(graph, id, green_tree=r))
+    end
+    let s = node.source
+        !isnothing(s) && (setattr!(graph, id, source=s))
+    end
+    cs = map(children(node)) do n
+        _convert_nodes(graph, n)
+    end
+    setchildren!(graph, id, cs)
+    return id
+end
+
+struct SyntaxTree
+    graph::SyntaxGraph
+    id::Int
+end
+
+function Base.getproperty(tree::SyntaxTree, name::Symbol)
+    # FIXME: Remove access to internals
+    name === :graph && return getfield(tree, :graph)
+    name === :id  && return getfield(tree, :id)
+    return getproperty(getfield(tree, :graph), name)[getfield(tree, :id)]
+end
+
+function Base.get(tree::SyntaxTree, name::Symbol, default)
+    attr = get(getfield(tree, :graph), name, nothing)
+    return isnothing(attr) ? default :
+           get(attr, getfield(tree, :id), default)
+end
+
+function haschildren(tree::SyntaxTree)
+    haschildren(tree.graph, tree.id)
+end
+
+function numchildren(tree::SyntaxTree)
+    numchildren(tree.graph, tree.id)
+end
+
+function children(tree::SyntaxTree)
+    (SyntaxTree(tree.graph, c) for c in children(tree.graph, tree.id))
+end
+
+function child(tree::SyntaxTree, i::Integer)
+    SyntaxTree(tree.graph, child(tree.graph, tree.id, i))
+end
+
+function Base.getindex(tree::SyntaxTree, i::Integer)
+    child(tree, i)
+end
+
+function filename(tree::SyntaxTree)
+    return filename(tree.source)
+end
+
+function hasattr(tree::SyntaxTree, name::Symbol)
+    attr = get(tree.graph.attributes, name, nothing)
+    return !isnothing(attr) && haskey(attr, tree.id)
+end
+
+source_location(tree::SyntaxTree) = source_location(tree.source, tree.source_pos)
+first_byte(tree::SyntaxTree) = tree.source_pos
+last_byte(tree::SyntaxTree) = tree.source_pos + span(tree.green_tree) - 1
+
+function head(tree::SyntaxTree)
+    tree.head
+end
+
+function SyntaxTree(graph::SyntaxGraph, node::SyntaxNode)
+    ensure_attributes!(graph, head=SyntaxHead, green_tree=GreenNode,
+                       source_pos=Int, source=SourceFile, value=Any)
+    id = _convert_nodes(graph, node)
+    return SyntaxTree(graph, id)
+end
+
+function SyntaxTree(node::SyntaxNode)
+    return SyntaxTree(SyntaxGraph(), node)
+end
+
+function _show_syntax_tree(io, current_filename, node, indent, show_byte_offsets)
+    if hasattr(node, :source)
+        fname = filename(node)
+        line, col = source_location(node)
+        posstr = "$(lpad(line, 4)):$(rpad(col,3))"
+        if show_byte_offsets
+            posstr *= "│$(lpad(first_byte(node),6)):$(rpad(last_byte(node),6))"
+        end
+    else
+        fname = nothing
+        posstr = "        "
+        if show_byte_offsets
+            posstr *= "│             "
+        end
+    end
+    val = get(node, :value, nothing)
+    nodestr = haschildren(node) ? "[$(untokenize(head(node)))]" :
+              isa(val, Symbol) ? string(val) :
+              kind(node) == K"SSALabel" ? "#SSA-$(node.var_id)" :
+              repr(val)
+    treestr = string(indent, nodestr)
+    # Add filename if it's changed from the previous node
+    if fname != current_filename[] && !isnothing(fname)
+        #println(io, "# ", fname)
+        treestr = string(rpad(treestr, 40), "│$fname")
+        current_filename[] = fname
+    end
+    println(io, posstr, "│", treestr)
+    if haschildren(node)
+        new_indent = indent*"  "
+        for n in children(node)
+            _show_syntax_tree(io, current_filename, n, new_indent, show_byte_offsets)
+        end
+    end
+end
+
+function Base.show(io::IO, ::MIME"text/plain", tree::SyntaxTree; show_byte_offsets=false)
+    println(io, "line:col│ tree                                   │ file_name")
+    _show_syntax_tree(io, Ref{Union{Nothing,String}}(nothing), tree, "", show_byte_offsets)
+end
+
+
+#-------------------------------------------------------------------------------
+# Utilities
+
+"""
+Unique symbolic identity for a variable within a `LoweringContext`
+"""
+const VarId = Int
+
+"""
+Metadata about a variable name - whether it's a local, etc
+"""
+struct VarInfo
+    islocal::Bool # Local variable (if unset, variable is global)
+    # isarg::Bool # Is a function argument ??
+    # etc
+end
+
+struct SSAVar
+    id::VarId
+end
+
+struct LoweringContext
+    graph::SyntaxGraph
+    next_var_id::Ref{VarId}
+    scope_stack::Vector{Dict{String,VarId}}  # Stack of name=>id mappings for each scope, innermost scope last.
+    var_info::Dict{VarId,VarInfo}
+    diagnostics::Vector{Diagnostic}
+end
+
+function LoweringContext()
+    LoweringContext(SyntaxGraph(),
+                    Ref{VarId}(1),
+                    Vector{Dict{String,VarId}}(),
+                    Dict{VarId,VarInfo}(),
+                    Vector{Diagnostic}())
+end
+
+function emit_error(ctx::LoweringContext, ex, kws...)
+    emit_error(ctx.diagnostics, first_byte(ex):last_byte(ex), kws...)
+end
+
+function SSALabel(ctx, srcref)
+    val = ctx.next_var_id[]
+    ctx.next_var_id[] += 1
+    SyntaxNode(K"SSALabel", val, srcref=srcref)
+end
 
 function Identifier(val, srcref)
     SyntaxNode(K"Identifier", val, srcref=srcref)
 end
 
-function SSALabel(ctx, srcref)
-    val = ctx.next_ssa_label[]
-    ctx.next_ssa_label[] += 1
-    SyntaxNode(K"SSALabel", val, srcref=srcref)
-end
-
+newnode!(ctx::LoweringContext) = newnode!(ctx.graph)
+setchildren!(ctx::LoweringContext, args...) = setchildren!(ctx.graph, args...)
 
 #-------------------------------------------------------------------------------
 
@@ -43,36 +435,134 @@ function blockify(ex)
     kind(ex) == K"block" ? ex : SyntaxNode(K"block", ex, [ex])
 end
 
+function expand_forms(ctx, ex)
+    ensure_attributes!(ctx.graph, scope=ScopeInfo)
+    ensure_attributes!(ctx.graph, hard_scope=Bool)
+    ensure_attributes!(ctx.graph, var_id=VarId)
+    SyntaxTree(ctx.graph, _expand_forms(ctx, ex))
+end
+
+_children_ids() = ()
+_children_ids(c::Integer, cs...) = (Int(c), _children_ids(cs...)...)
+_children_ids(c::SyntaxTree, cs...) = (c.id, _children_ids(cs...)...)
+
+function makenode(ctx::LoweringContext, srcref, head, children...; attrs...)
+    makenode(ctx.graph, srcref, head, _children_ids(children...)...; attrs...)
+end
+
+function makenode(graph::SyntaxGraph, srcref, head, children...; attrs...)
+    id = newnode!(graph)
+    setchildren!(graph, id, children)
+    setattr!(graph, id; head=head, attrs...)
+    setattr!(graph, id;
+             source=srcref.source,
+             green_tree=srcref.green_tree,
+             source_pos=srcref.source_pos)
+    return id
+end
+
+function ssavar(ctx::LoweringContext, srcref)
+    id = makenode(ctx, srcref, K"SSALabel", var_id=ctx.next_var_id[])
+    ctx.next_var_id[] += 1
+    return id
+end
+
+function assign_tmp(ctx::LoweringContext, ex)
+    tmp = ssavar(ctx, ex)
+    tmpdef = makenode(ctx, ex, K"=", tmp, ex)
+    tmp, tmpdef
+end
+
 function expand_assignment(ctx, ex)
 end
 
-function expand_forms(ctx, ex)
+function is_sym_decl(x)
+    k = kind(x)
+    k == K"Identifier" || k == K"::"
+end
+
+function decl_var(ex)
+    kind(ex) == K"::" ? ex[1] : ex
+end
+
+function expand_let(ctx, ex)
+    is_hard_scope = get(ex, :hard_scope, true)
+    blk = ex[2].id
+    for binding in Iterators.reverse(children(ex[1]))
+        kb = kind(binding)
+        if is_sym_decl(kb)
+            blk = makenode(ctx, ex, K"block",
+                makenode(ctx, ex, K"local", binding; sr...),
+                blk;
+                sr...,
+                scope=ScopeInfo(is_hard=is_hard_scope)
+            )
+        elseif kb == K"=" && numchildren(binding) == 2
+            lhs = binding[1]
+            rhs = binding[2]
+            if is_sym_decl(lhs)
+                tmp, tmpdef = assign_tmp(ctx, rhs)
+                blk = makenode(ctx, binding, K"block",
+                    tmpdef,
+                    makenode(ctx, ex, K"block",
+                        makenode(ctx, lhs, K"local_def", lhs), # TODO: Use K"local" with attr?
+                        makenode(ctx, rhs, K"=", decl_var(lhs), tmp),
+                        blk;
+                        scope=ScopeInfo(is_hard=is_hard_scope)
+                    )
+                )
+            else
+                TODO("Functions and multiple assignment")
+            end
+        else
+            emit_error(ctx, binding, error="Invalid binding in let")
+            continue
+        end
+    end
+    return blk
+end
+
+function _expand_forms(ctx, ex)
     k = kind(ex)
     if k == K"while"
-        SyntaxNode(K"break_block", ex, [
-            Identifier(:loop_exit, ex), # Should this refer syntactically to the `end`?
-            SyntaxNode(K"_while", ex, [
-                expand_condition(ctx, ex[1]),
-                SyntaxNode(K"break_block", ex, [
-                    Identifier(:loop_cont, ex[2]),
-                    SyntaxNode(K"scope_block", ex[2], [
-                        blockify(expand_forms(ctx, ex[2]))
-                    ])
-                ])
-            ])
-        ])
+        # SyntaxNode(K"break_block", ex, [
+        #     Identifier(:loop_exit, ex), # Should this refer syntactically to the `end`?
+        #     SyntaxNode(K"_while", ex, [
+        #         expand_condition(ctx, ex[1]),
+        #         SyntaxNode(K"break_block", ex, [
+        #             Identifier(:loop_cont, ex[2]),
+        #             SyntaxNode(K"scope_block", ex[2], [
+        #                 blockify(_expand_forms(ctx, ex[2]))
+        #             ])
+        #         ])
+        #     ])
+        # ])
+    elseif k == K"let"
+        return expand_let(ctx, ex)
     elseif !haschildren(ex)
-        ex
+        return ex
     else
         if k == K"=" && (numchildren(ex) != 2 && kind(ex[1]) != K"Identifier")
             error("TODO")
         end
-        SyntaxNode(head(ex), map(e->expand_forms(ctx,e), children(ex)), srcref=ex)
+        # FIXME: What to do about the ids vs SyntaxTree?
+        makenode(ctx, ex, head(ex), [_expand_forms(ctx,e) for e in children(ex)]...)
     end
 end
 
 #-------------------------------------------------------------------------------
-# Pass 2: Identify and rename local vars
+# Pass 2: analyze scopes (passes 2/3 in flisp code)
+#
+# This pass analyzes the names (variables/constants etc) used in scopes
+#
+# This pass records information about variables used by closure conversion.
+# finds which variables are assigned or captured, and records variable
+# type declarations.
+#
+# This info is recorded by setting the second argument of `lambda` expressions
+# in-place to
+#   (var-info-lst captured-var-infos ssavalues static_params)
+# where var-info-lst is a list of var-info records
 
 function decl_var(ex)
     kind(ex) == K"::" ? ex[1] : ex
@@ -95,7 +585,8 @@ end
 # Can we avoid having the logic of "what is an identifier" repeated by dealing
 # with these during desugaring
 # * Attach an identifier attribute to nodes. If they're an identifier they get this
-# * Or alternatively / more easily, desugar by replacment ??
+# * Replace operator kinds by K"Identifier" in parsing?
+# * Replace operator kinds by K"Identifier" in desugaring?
 function identifier_name(ex)
     if kind(ex) == K"var"
         ex = ex[1]
@@ -211,20 +702,29 @@ end
 # 2. Incorporate hygenic-scope here so we always have a parent scope when
 #    processing variables rather than putting them into a thunk (??)
 
+# Mirror of flisp scope info structure
+# struct ScopeInfo
+#     lambda_vars::Union{LambdaLocals,LambdaVars}
+#     parent::Union{Nothing,ScopeInfo}
+#     args::Set{Symbol}
+#     locals::Set{Symbol}
+#     globals::Set{Symbol}
+#     static_params::Set{Symbol}
+#     renames::Dict{Symbol,Symbol}
+#     implicit_globals::Set{Symbol}
+#     warn_vars::Set{Symbol}
+#     is_soft::Bool
+#     is_hard::Bool
+#     table::Dict{Symbol,Any}
+# end
+
 struct ScopeInfo
-    lambda_vars::Union{LambdaLocals,LambdaVars}
-    parent::Union{Nothing,ScopeInfo}
-    args::Set{Symbol}
     locals::Set{Symbol}
-    globals::Set{Symbol}
-    static_params::Set{Symbol}
-    renames::Dict{Symbol,Symbol}
-    implicit_globals::Set{Symbol}
-    warn_vars::Set{Symbol}
     is_soft::Bool
     is_hard::Bool
-    table::Dict{Symbol,Any}
 end
+
+ScopeInfo(; is_soft=false, is_hard=false) = ScopeInfo(Set{Symbol}(), is_soft, is_hard)
 
 # Transform lambdas from
 #   (lambda (args ...) body)
@@ -238,19 +738,7 @@ function resolve_scopes(ctx, ex)
 end
 
 #-------------------------------------------------------------------------------
-# Pass 3: analyze variables
-#
-# This pass records information about variables used by closure conversion.
-# finds which variables are assigned or captured, and records variable
-# type declarations.
-#
-# This info is recorded by setting the second argument of `lambda` expressions
-# in-place to
-#   (var-info-lst captured-var-infos ssavalues static_params)
-# where var-info-lst is a list of var-info records
-
-#-------------------------------------------------------------------------------
-# Pass 4: closure conversion
+# Pass 3: closure conversion
 #
 # This pass lifts all inner functions to the top level by generating
 # a type for them.
@@ -264,4 +752,8 @@ end
 #     (self::yt)(y) = y + self.x
 #
 #     f(x) = yt(x)
+
+#-------------------------------------------------------------------------------
+# Pass 4: Flatten to linear IR
+
 

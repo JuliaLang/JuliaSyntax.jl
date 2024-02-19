@@ -47,6 +47,11 @@ function _source_line_index(source::SourceFile, byte_index)
 end
 _source_line(source::SourceFile, lineidx) = lineidx + source.first_line - 1
 
+function filename(source::SourceFile)
+    f = source.filename
+    isnothing(f) ? f : ""
+end
+
 """
 Get the line number at the given byte index.
 """

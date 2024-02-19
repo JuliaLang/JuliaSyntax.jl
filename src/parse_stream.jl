@@ -83,6 +83,8 @@ end
 
 SyntaxHead(k::Kind) = SyntaxHead(k, EMPTY_FLAGS)
 
+Base.convert(::Type{SyntaxHead}, k::Kind) = SyntaxHead(k)
+
 kind(head::SyntaxHead) = head.kind
 
 """
