@@ -49,7 +49,7 @@ _source_line(source::SourceFile, lineidx) = lineidx + source.first_line - 1
 
 function filename(source::SourceFile)
     f = source.filename
-    isnothing(f) ? f : ""
+    !isnothing(f) ? f : ""
 end
 
 """

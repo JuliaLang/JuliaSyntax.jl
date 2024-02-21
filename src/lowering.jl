@@ -2,9 +2,10 @@
 # non-type-related compiler passes)
 
 #-------------------------------------------------------------------------------
-# Syntax graph prototype 2
-#
-# - Fully deconstructed graph
+"""
+Directed graph with arbitrary attributes on nodes. Used here for representing
+one or several syntax trees.
+"""
 struct SyntaxGraph
     edge_ranges::Vector{UnitRange{Int}}
     edges::Vector{Int}
@@ -153,6 +154,11 @@ function hasattr(tree::SyntaxTree, name::Symbol)
     return !isnothing(attr) && haskey(attr, tree.id)
 end
 
+function attrnames(tree::SyntaxTree)
+    attrs = tree.graph.attributes
+    [name for (name, value) in attrs if haskey(value, tree.id)]
+end
+
 source_location(tree::SyntaxTree) = source_location(tree.source, tree.source_pos)
 first_byte(tree::SyntaxTree) = tree.source_pos
 last_byte(tree::SyntaxTree) = tree.source_pos + span(tree.green_tree) - 1
@@ -171,6 +177,9 @@ end
 function SyntaxTree(node::SyntaxNode)
     return SyntaxTree(SyntaxGraph(), node)
 end
+
+attrsummary(name, value) = string(name)
+attrsummary(name, value::Number) = "$name=$value"
 
 function _show_syntax_tree(io, current_filename, node, indent, show_byte_offsets)
     if hasattr(node, :source)
@@ -192,11 +201,19 @@ function _show_syntax_tree(io, current_filename, node, indent, show_byte_offsets
               isa(val, Symbol) ? string(val) :
               kind(node) == K"SSALabel" ? "#SSA-$(node.var_id)" :
               repr(val)
+
     treestr = string(indent, nodestr)
+
+    std_attrs = Set([:value,:source_pos,:head,:source,:green_tree])
+    attrstr = join([attrsummary(n, getproperty(node, n)) for n in attrnames(node) if n ∉ std_attrs], ",")
+    if !isempty(attrstr)
+        treestr = string(rpad(treestr, 40), "│ $attrstr")
+    end
+
     # Add filename if it's changed from the previous node
     if fname != current_filename[] && !isnothing(fname)
         #println(io, "# ", fname)
-        treestr = string(rpad(treestr, 40), "│$fname")
+        treestr = string(rpad(treestr, 80), "│$fname")
         current_filename[] = fname
     end
     println(io, posstr, "│", treestr)
@@ -209,7 +226,7 @@ function _show_syntax_tree(io, current_filename, node, indent, show_byte_offsets
 end
 
 function Base.show(io::IO, ::MIME"text/plain", tree::SyntaxTree; show_byte_offsets=false)
-    println(io, "line:col│ tree                                   │ file_name")
+    println(io, "line:col│ tree                                   │ attributes                            | file_name")
     _show_syntax_tree(io, Ref{Union{Nothing,String}}(nothing), tree, "", show_byte_offsets)
 end
 
