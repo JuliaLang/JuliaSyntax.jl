@@ -87,11 +87,11 @@ function Base.show(io::IO, ::MIME"text/plain", node::GreenNode, str::AbstractStr
     _show_green_node(io, node, "", 1, str, show_trivia)
 end
 
-function build_tree(::Type{GreenNode}, stream::ParseStream; kws...)
-    build_tree(GreenNode{SyntaxHead}, stream; kws...) do h, srcrange, cs
+# we don't need the `filename` and `first_line` kwargs, but some trees do, so we allow them to be passed
+function build_tree(::Type{GreenNode}, stream::ParseStream; filename=nothing, first_line=nothing)
+    build_tree(GreenNode{SyntaxHead}, stream) do h, srcrange, cs
         span = length(srcrange)
         isnothing(cs) ? GreenNode(h, span, ()) :
                         GreenNode(h, span, collect(GreenNode{SyntaxHead}, cs))
     end
 end
-

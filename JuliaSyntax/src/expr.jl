@@ -140,7 +140,7 @@ function _string_to_Expr(k, args)
         #   """\n  a\n  b""" ==>  "a\nb"
         return only(args2)
     else
-        # This only happens when k == K"string" or when an error has occurred. 
+        # This only happens when k == K"string" or when an error has occurred.
         return Expr(:string, args2...)
     end
 end
@@ -159,7 +159,7 @@ function _fixup_Expr_children!(head, loc, args)
         arg = args[i]
         was_parens = @isexpr(arg, :parens)
         arg = _strip_parens(arg)
-        if @isexpr(arg, :(=)) && eq_to_kw_in_call && i > 1 
+        if @isexpr(arg, :(=)) && eq_to_kw_in_call && i > 1
             arg = Expr(:kw, arg.args...)
         elseif k != K"parens" && @isexpr(arg, :., 1) && arg.args[1] isa Tuple
             h, a = arg.args[1]::Tuple{SyntaxHead,Any}
@@ -489,13 +489,13 @@ struct _BuildExprStackEntry
 end
 
 function build_tree(::Type{Expr}, stream::ParseStream;
-                    filename=nothing, first_line=1, kws...)
+                    filename=nothing, first_line=1)
     source = SourceFile(stream, filename=filename, first_line=first_line)
     txtbuf = unsafe_textbuf(stream)
     args = Any[]
     childranges = UnitRange{Int}[]
     childheads = SyntaxHead[]
-    entry = build_tree(_BuildExprStackEntry, stream; kws...) do head, srcrange, nodechildren
+    entry = build_tree(_BuildExprStackEntry, stream) do head, srcrange, nodechildren
         if is_trivia(head) && !is_error(head)
             return nothing
         end
@@ -534,4 +534,3 @@ function Base.Expr(node::SyntaxNode)
     loc = source_location(LineNumberNode, node.source, first(range(node)))
     only(_fixup_Expr_children!(SyntaxHead(K"None",EMPTY_FLAGS), loc, Any[ex]))
 end
-

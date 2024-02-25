@@ -994,7 +994,7 @@ end
 # API for extracting results from ParseStream
 
 """
-    build_tree(make_node::Function, ::Type{StackEntry}, stream::ParseStream; kws...)
+    build_tree(make_node::Function, ::Type{StackEntry}, stream::ParseStream)
 
 Construct a tree from a ParseStream using depth-first traversal. `make_node`
 must have the signature
@@ -1010,8 +1010,7 @@ wrap them in a single node.
 
 The tree here is constructed depth-first in postorder.
 """
-function build_tree(make_node::Function, ::Type{NodeType}, stream::ParseStream;
-                    kws...) where NodeType
+function build_tree(make_node::Function, ::Type{NodeType}, stream::ParseStream) where NodeType
     stack = Vector{NamedTuple{(:first_token,:node),Tuple{Int,NodeType}}}()
 
     tokens = stream.tokens
