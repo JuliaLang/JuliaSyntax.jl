@@ -122,14 +122,14 @@ end
     catch exc
         @test exc isa JuliaSyntax.ParseError
         @test sprint(showerror, exc) == """
-            ParseError:
+            ParseError: some errors detected:
             # Error @ somefile.jl:1:3
             a -- b -- c
             # └┘ ── invalid operator"""
         @test occursin("Stacktrace:\n", sprint(showerror, exc, catch_backtrace()))
         file_url = JuliaSyntax._file_url("somefile.jl")
         @test sprint(showerror, exc, context=:color=>true) == """
-            ParseError:
+            ParseError: some errors detected:
             \e[90m# Error @ \e[0;0m\e]8;;$file_url#1:3\e\\\e[90msomefile.jl:1:3\e[0;0m\e]8;;\e\\
             a \e[48;2;120;70;70m--\e[0;0m b -- c
             \e[90m# └┘ ── \e[0;0m\e[91minvalid operator\e[0;0m"""
@@ -145,7 +145,7 @@ end
     catch exc
         @test exc isa JuliaSyntax.ParseError
         @test sprint(showerror, exc) == """
-            ParseError:
+            ParseError: some errors detected:
             # Warning @ somefile.jl:1:2
             @(a)
             #└─┘ ── parenthesizing macro names is unnecessary
@@ -163,7 +163,7 @@ end
     catch exc
         @test exc isa JuliaSyntax.ParseError
         @test sprint(showerror, exc) == """
-            ParseError:
+            ParseError: some warnings detected:
             # Warning @ somefile.jl:1:2
             @(a)
             #└─┘ ── parenthesizing macro names is unnecessary"""
