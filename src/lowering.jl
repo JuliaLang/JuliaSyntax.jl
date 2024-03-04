@@ -311,7 +311,7 @@ end
 
 # Mirror of flisp scope info structure
 # struct ScopeInfo
-#     lambda_vars::Union{LambdaLocals,LambdaVars}
+#     lambda_vars::Union{LambdaLocals,LambdaInfo}
 #     parent::Union{Nothing,ScopeInfo}
 #     args::Set{Symbol}
 #     locals::Set{Symbol}
@@ -426,9 +426,11 @@ function expand_condition(ctx, ex)
 end
 
 function expand_forms(ctx, ex)
-    ensure_attributes!(ctx.graph, scope=ScopeInfo)
-    ensure_attributes!(ctx.graph, hard_scope=Bool)
-    ensure_attributes!(ctx.graph, var_id=VarId)
+    ensure_attributes!(ctx.graph,
+                       scope=ScopeInfo,
+                       hard_scope=Bool,
+                       var_id=VarId,
+                       lambda_info=LambdaInfo)
     SyntaxTree(ctx.graph, _expand_forms(ctx, ex))
 end
 
@@ -444,12 +446,16 @@ end
 
 function makenode(graph::SyntaxGraph, srcref, head, children...; attrs...)
     id = newnode!(graph)
-    if kind(head) in (K"Identifier", K"core") || is_literal(head)
+    if kind(head) in (K"Identifier", K"core", K"SSALabel") || is_literal(head)
         @assert length(children) == 0
     else
         setchildren!(graph, id, children)
     end
     setattr!(graph, id; head=head, attrs...)
+    if srcref isa NodeId
+        # Hack!
+        srcref = SyntaxTree(graph, srcref)
+    end
     setattr!(graph, id;
              source=srcref.source,
              green_tree=srcref.green_tree,
@@ -475,6 +481,11 @@ end
 function is_sym_decl(x)
     k = kind(x)
     k == K"Identifier" || k == K"::"
+end
+
+# Identifier made of underscores
+function is_placeholder(ex)
+    kind(ex) == K"Identifier" && all(==('_'), ex.value::String)
 end
 
 function decl_var(ex)
@@ -583,18 +594,18 @@ end
 core_ref(ctx, ex, name) = makenode(ctx, ex, K"core", value=name)
 Any_type(ctx, ex) = core_ref(ctx, ex, "Any")
 svec_type(ctx, ex) = core_ref(ctx, ex, "svec")
-nothing_(ctx,ex) = core_ref(ctx, ex, "nothing")
+nothing_(ctx, ex) = core_ref(ctx, ex, "nothing")
+unused(ctx, ex) = core_ref(ctx, ex, "UNUSED")
 
 function expand_function_def(ctx, ex)
     name = ex[1]
     if kind(name) == K"where"
         TODO("where handling")
     end
+    return_type = nothing
     if kind(name) == K"::"
-        rettype = name[2]
+        return_type = name[2]
         name = name[1]
-    else
-        rettype = Any_type(ctx, name)
     end
     if numchildren(ex) == 2 && is_identifier(name) # TODO: Or name as globalref
         if !is_valid_name(name)
@@ -636,32 +647,50 @@ function expand_function_def(ctx, ex)
         # preamble is arbitrary code which computes
         # svec(types, sparms, location)
 
-        types = []
+        arg_names = []
+        arg_types = []
         for (i,arg) in enumerate(args)
             info = analyze_function_arg(arg)
-            type = !isnothing(info.type) ? info.type : Any_type(ctx, name)
+            aname = (isnothing(info.name) || is_placeholder(info.name)) ?
+                    unused(ctx, arg) : info.name
+            push!(arg_names, aname)
+            atype = !isnothing(info.type) ? info.type : Any_type(ctx, arg)
             @assert !info.is_nospecialize # TODO
             @assert !isnothing(info.name) && kind(info.name) == K"Identifier" # TODO
             if info.is_slurp
                 if i != length(args)
                     throw(LoweringError(arg, "`...` may only be used for the last function argument"))
                 end
-                type = makenode(K"curly", core_ref(ctx, arg, "Vararg"), arg)
+                atype = makenode(K"curly", core_ref(ctx, arg, "Vararg"), arg)
             end
-            push!(types, type)
+            push!(arg_types, atype)
         end
 
         preamble = makenode(ctx, ex, K"call",
                             svec_type(ctx, callex),
                             makenode(ctx, callex, K"call",
                                      svec_type(ctx, name),
-                                     types...),
+                                     arg_types...),
                             makenode(ctx, callex, K"Value", value=source_location(LineNumberNode, callex))
                            )
+        if !isnothing(return_type)
+            ret_var, ret_assign = assign_tmp(ctx, return_type)
+            body = makenode(ctx, body, K"block",
+                            ret_assign,
+                            body,
+                            scope=ScopeInfo())
+        else
+            ret_var = nothing
+            body = makenode(ctx, body, K"block",
+                            body,
+                            scope=ScopeInfo())
+        end
+        lambda = makenode(ctx, body, K"lambda", body;
+                          lambda_info=LambdaInfo(arg_names, ret_var))
         return makenode(ctx, ex, K"method",
                         function_name,
                         preamble,
-                        body)
+                        lambda)
     elseif kind(name) == K"tuple"
         TODO(name, "Anon function lowering")
     else
@@ -812,11 +841,6 @@ function has_scope_decl(decl_kind, ex)
     end
 end
 
-struct LambdaLocals
-    # For resolve-scopes pass
-    locals::Set{Symbol}
-end
-
 # TODO:
 # Incorporate hygenic-scope here so we always have a parent scope when
 # processing variables
@@ -833,15 +857,22 @@ end
 #     # static_params::Set{Symbol}
 # end
 
-struct LambdaVars
+struct LambdaInfo
+    arg_names::Vector{NodeId}
+    return_type::Union{Nothing,NodeId}
     arg_vars::Set{VarId}
     body_vars::Set{VarId}
 end
 
-LambdaVars(args) = LambdaVars(Set{VarId}(), Set{VarId}())
+function LambdaInfo(args, return_type)
+    LambdaInfo([_node_id(a) for a in args],
+               isnothing(return_type) ? nothing : _node_id(return_type),
+               Set{VarId}(),
+               Set{VarId}())
+end
 
 function resolve_scopes(ctx, ex)
-    thk_vars = LambdaVars()
+    thk_vars = LambdaInfo()
     resolve_scopes(ctx, thk_vars, ex)
 end
 
@@ -861,7 +892,7 @@ function resolve_scopes(ctx, lambda_vars, ex)
     # elseif locals # return Dict of locals
     # elseif islocal
     elseif k == K"lambda"
-        vars = LambdaVars(ex[1])
+        vars = LambdaInfo(ex[1])
         resolve_scopes(ctx, vars, ex[2])
     elseif hasattr(ex, :scope)
         # scope-block
@@ -890,6 +921,15 @@ end
 #     f(x) = yt(x)
 
 #-------------------------------------------------------------------------------
-# Pass 4: Flatten to linear IR
+# Main entry points
 
+# Passes 1-3
+# function symbolic_simplify()
+# end
 
+# Passes 1-4
+# TODO: What's a good name for this? It contains
+# * Symbolic simplification
+# * Tree flattening / conversion to linear IR
+function lower_code(ex)
+end
