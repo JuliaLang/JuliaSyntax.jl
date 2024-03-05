@@ -42,6 +42,7 @@ include("syntax_tree.jl")
 include("expr.jl")
 
 include("macroexpand.jl")
+include("syntax_graph.jl")
 include("lowering.jl")
 include("linear_ir.jl")
 
