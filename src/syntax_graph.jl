@@ -4,18 +4,33 @@ const NodeId = Int
 Directed graph with arbitrary attributes on nodes. Used here for representing
 one or several syntax trees.
 """
-struct SyntaxGraph
+struct SyntaxGraph{Attrs}
     edge_ranges::Vector{UnitRange{Int}}
     edges::Vector{NodeId}
-    attributes::Dict{Symbol,Any}
+    attributes::Attrs
 end
 
-SyntaxGraph() = SyntaxGraph(Vector{UnitRange{Int}}(), Vector{NodeId}(), Dict{Symbol,Any}())
+SyntaxGraph() = SyntaxGraph{Dict{Symbol,Any}}(Vector{UnitRange{Int}}(),
+                                              Vector{NodeId}(), Dict{Symbol,Any}())
+
+# "Freeze" attribute names and types, encoding them in the type of the returned
+# SyntaxGraph.
+function freeze_attrs(graph::SyntaxGraph)
+    frozen_attrs = (; pairs(graph.attributes)...)
+    SyntaxGraph(graph.edge_ranges, graph.edges, frozen_attrs)
+end
+
+function _show_attrs(io, attributes::Dict)
+    show(io, MIME("text/plain"), attributes)
+end
+function _show_attrs(io, attributes::NamedTuple)
+    show(io, MIME("text/plain"), Dict(pairs(attributes)...))
+end
 
 function Base.show(io::IO, ::MIME"text/plain", graph::SyntaxGraph)
-    print(io, SyntaxGraph,
+    print(io, typeof(graph),
           " with $(length(graph.edge_ranges)) vertices, $(length(graph.edges)) edges, and attributes:\n")
-    show(io, MIME("text/plain"), graph.attributes)
+    _show_attrs(io, graph.attributes)
 end
 
 function ensure_attributes!(graph::SyntaxGraph; kws...)
@@ -63,10 +78,22 @@ function child(graph::SyntaxGraph, id::NodeId, i::Integer)
     graph.edges[graph.edge_ranges[id][i]]
 end
 
+function getattr(graph::SyntaxGraph{<:Dict}, name::Symbol)
+    getfield(graph, :attributes)[name]
+end
+
+function getattr(graph::SyntaxGraph{<:NamedTuple}, name::Symbol)
+    getfield(getfield(graph, :attributes), name)
+end
+
+function getattr(graph::SyntaxGraph, name::Symbol, default)
+    get(getfield(graph, :attributes), name, default)
+end
+
 # FIXME: Probably terribly non-inferrable?
 function setattr!(graph::SyntaxGraph, id; attrs...)
     for (k,v) in pairs(attrs)
-        graph.attributes[k][id] = v
+        getattr(graph, k)[id] = v
     end
 end
 
@@ -75,11 +102,7 @@ function Base.getproperty(graph::SyntaxGraph, name::Symbol)
     name === :edge_ranges && return getfield(graph, :edge_ranges)
     name === :edges       && return getfield(graph, :edges)
     name === :attributes  && return getfield(graph, :attributes)
-    return getfield(graph, :attributes)[name]
-end
-
-function Base.get(graph::SyntaxGraph, name::Symbol, default)
-    get(getfield(graph, :attributes), name, default)
+    return getattr(graph, name)
 end
 
 function _convert_nodes(graph::SyntaxGraph, node::SyntaxNode)
@@ -111,8 +134,8 @@ function _convert_nodes(graph::SyntaxGraph, node::SyntaxNode)
     return id
 end
 
-struct SyntaxTree
-    graph::SyntaxGraph
+struct SyntaxTree{GraphType}
+    graph::GraphType
     id::NodeId
 end
 
@@ -127,7 +150,7 @@ function Base.getproperty(tree::SyntaxTree, name::Symbol)
 end
 
 function Base.get(tree::SyntaxTree, name::Symbol, default)
-    attr = get(getfield(tree, :graph), name, nothing)
+    attr = getattr(getfield(tree, :graph), name, nothing)
     return isnothing(attr) ? default :
            get(attr, getfield(tree, :id), default)
 end
@@ -164,13 +187,13 @@ function filename(tree::SyntaxTree)
 end
 
 function hasattr(tree::SyntaxTree, name::Symbol)
-    attr = get(tree.graph.attributes, name, nothing)
+    attr = getattr(tree.graph, name, nothing)
     return !isnothing(attr) && haskey(attr, tree.id)
 end
 
 function attrnames(tree::SyntaxTree)
     attrs = tree.graph.attributes
-    [name for (name, value) in attrs if haskey(value, tree.id)]
+    [name for (name, value) in pairs(attrs) if haskey(value, tree.id)]
 end
 
 source_location(::Type{LineNumberNode}, tree::SyntaxTree) = source_location(LineNumberNode, tree.source, tree.source_pos)
@@ -276,5 +299,9 @@ end
 
 function Base.show(io::IO, node::SyntaxTree)
     _show_syntax_tree_sexpr(io, node)
+end
+
+function build_tree(::Type{SyntaxTree}, stream::ParseStream; kws...)
+    SyntaxTree(build_tree(SyntaxNode, stream; kws...))
 end
 

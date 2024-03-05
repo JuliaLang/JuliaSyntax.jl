@@ -51,8 +51,8 @@ end
 
 ScopeInfo(; is_soft=false, is_hard=false) = ScopeInfo(Dict{Symbol,VarId}(), is_soft, is_hard)
 
-struct LoweringContext
-    graph::SyntaxGraph
+struct LoweringContext{GraphType}
+    graph::GraphType
     next_var_id::Ref{VarId}
     globals::Dict{Symbol,VarId}
     scope_stack::Vector{ScopeInfo}  # Stack of name=>id mappings for each scope, innermost scope last.
@@ -60,7 +60,16 @@ struct LoweringContext
 end
 
 function LoweringContext()
-    LoweringContext(SyntaxGraph(),
+    graph = SyntaxGraph()
+    ensure_attributes!(graph,
+                       head=SyntaxHead, green_tree=GreenNode,
+                       source_pos=Int, source=SourceFile,
+                       value=Any,
+                       scope=ScopeInfo,
+                       hard_scope=Bool,
+                       var_id=VarId,
+                       lambda_info=LambdaInfo)
+    LoweringContext(freeze_attrs(graph),
                     Ref{VarId}(1),
                     Dict{Symbol,VarId}(),
                     Vector{ScopeInfo}(),
