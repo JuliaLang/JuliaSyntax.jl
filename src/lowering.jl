@@ -77,9 +77,13 @@ function LoweringContext()
 end
 
 #-------------------------------------------------------------------------------
+# Error handling
+
+# Errors found during lowering will result in LoweringError being thrown to
+# indicate the syntax causing the error.
 struct LoweringError <: Exception
-    ex
-    msg
+    ex::SyntaxTree
+    msg::String
 end
 
 function Base.showerror(io::IO, exc::LoweringError)
@@ -94,7 +98,7 @@ function Base.showerror(io::IO, exc::LoweringError)
     show_diagnostic(io, d, exc.ex.source)
 end
 
-function chk_code(ex, cond)
+function _chk_code(ex, cond)
     cond_str = string(cond)
     quote
         ex = $(esc(ex))
@@ -110,6 +114,7 @@ function chk_code(ex, cond)
     end
 end
 
+# Internal error checking macro.
 # Check a condition involving an expression, throwing a LoweringError if it
 # doesn't evaluate to true. Does some very simple pattern matching to attempt
 # to extract the expression variable from the left hand side.
@@ -130,40 +135,15 @@ macro chk(cond)
             error("Can't analyze $cond")
         end
     end
-    chk_code(ex, cond)
+    _chk_code(ex, cond)
 end
 
 macro chk(ex, cond)
-    chk_code(ex, cond)
+    _chk_code(ex, cond)
 end
 
 #-------------------------------------------------------------------------------
-
-# pass 1: syntax desugaring
-
-function is_quoted(ex)
-    kind(ex) in KSet"quote top core globalref outerref break inert
-                     meta inbounds inline noinline loopinfo"
-end
-
-function expand_condition(ctx, ex)
-    if head(ex) == K"block" || head(ex) == K"||" || head(ex) == K"&&"
-        # || and && get special lowering so that they compile directly to jumps
-        # rather than first computing a bool and then jumping.
-        error("TODO expand_condition")
-    end
-    expand_forms(ctx, ex)
-end
-
-function expand_forms(ctx, ex)
-    ensure_attributes!(ctx.graph,
-                       scope=ScopeInfo,
-                       hard_scope=Bool,
-                       var_id=VarId,
-                       lambda_info=LambdaInfo)
-    SyntaxTree(ctx.graph, _expand_forms(ctx, ex))
-end
-
+# AST creation utilities
 _node_id(ex::NodeId) = ex
 _node_id(ex::SyntaxTree) = ex.id
 
@@ -193,19 +173,37 @@ function makenode(graph::SyntaxGraph, srcref, head, children...; attrs...)
     return id
 end
 
+# Create a new SSA variable
 function ssavar(ctx::LoweringContext, srcref)
     id = makenode(ctx, srcref, K"SSALabel", var_id=ctx.next_var_id[])
     ctx.next_var_id[] += 1
     return id
 end
 
+# Assign `ex` to an SSA variable.
+# Return (variable, assignment_node)
 function assign_tmp(ctx::LoweringContext, ex)
-    tmp = ssavar(ctx, ex)
-    tmpdef = makenode(ctx, ex, K"=", tmp, ex)
-    tmp, tmpdef
+    var = ssavar(ctx, ex)
+    assign_var = makenode(ctx, ex, K"=", var, ex)
+    var, assign_var
 end
 
-function expand_assignment(ctx, ex)
+# Convenience functions to create leaf nodes referring to identifiers within
+# the Core and Top modules.
+core_ref(ctx, ex, name) = makenode(ctx, ex, K"core", name_val=name)
+Any_type(ctx, ex) = core_ref(ctx, ex, "Any")
+svec_type(ctx, ex) = core_ref(ctx, ex, "svec")
+nothing_(ctx, ex) = core_ref(ctx, ex, "nothing")
+unused(ctx, ex) = core_ref(ctx, ex, "UNUSED")
+
+top_ref(ctx, ex, name) = makenode(ctx, ex, K"top", name_val=name)
+
+#-------------------------------------------------------------------------------
+# Predicates and accessors working on expression trees
+
+function is_quoted(ex)
+    kind(ex) in KSet"quote top core globalref outerref break inert
+                     meta inbounds inline noinline loopinfo"
 end
 
 function is_sym_decl(x)
@@ -218,8 +216,32 @@ function is_placeholder(ex)
     kind(ex) == K"Identifier" && all(==('_'), ex.name_val)
 end
 
+function identifier_name(ex)
+    kind(ex) == K"var" ? ex[1] : ex
+end
+
+function is_valid_name(ex)
+    n = identifier_name(ex).name_val
+    n !== "ccall" && n !== "cglobal"
+end
+
 function decl_var(ex)
     kind(ex) == K"::" ? ex[1] : ex
+end
+
+
+#-------------------------------------------------------------------------------
+# Lowering Pass 1 - basic desugaring
+function expand_condition(ctx, ex)
+    if head(ex) == K"block" || head(ex) == K"||" || head(ex) == K"&&"
+        # || and && get special lowering so that they compile directly to jumps
+        # rather than first computing a bool and then jumping.
+        error("TODO expand_condition")
+    end
+    expand_forms(ctx, ex)
+end
+
+function expand_assignment(ctx, ex)
 end
 
 function expand_let(ctx, ex)
@@ -257,23 +279,6 @@ function expand_let(ctx, ex)
         end
     end
     return blk
-end
-
-# FIXME: The problem of "what is an identifier" pervades lowering ... we have
-# various things which seem like identifiers:
-#
-# * Identifier (symbol)
-# * K"var" nodes
-# * Operator kinds
-# * Underscore placeholders
-#
-# Can we avoid having the logic of "what is an identifier" repeated by dealing
-# with these during desugaring
-# * Attach an identifier attribute to nodes. If they're an identifier they get this
-# * Replace operator kinds by K"Identifier" in parsing?
-# * Replace operator kinds by K"Identifier" in desugaring?
-function identifier_name(ex)
-    kind(ex) == K"var" ? ex[1] : ex
 end
 
 function expand_call(ctx, ex)
@@ -323,14 +328,6 @@ function analyze_function_arg(full_ex)
             is_slurp=is_slurp,
             is_nospecialize=is_nospecialize)
 end
-
-core_ref(ctx, ex, name) = makenode(ctx, ex, K"core", name_val=name)
-Any_type(ctx, ex) = core_ref(ctx, ex, "Any")
-svec_type(ctx, ex) = core_ref(ctx, ex, "svec")
-nothing_(ctx, ex) = core_ref(ctx, ex, "nothing")
-unused(ctx, ex) = core_ref(ctx, ex, "UNUSED")
-
-top_ref(ctx, ex, name) = makenode(ctx, ex, K"top", name_val=name)
 
 function expand_function_def(ctx, ex)
     @chk numchildren(ex) in (1,2)
@@ -467,7 +464,6 @@ function _expand_forms(ctx, ex)
                 TODO(ex, "destructuring assignment")
             end
         end
-        # FIXME: What to do about the ids vs SyntaxTree?
         mapchildren(_expand_forms, ctx, ex)
     end
 end
@@ -484,34 +480,16 @@ function mapchildren(f, ctx, ex)
     return id2
 end
 
-# FIXME: Remove this hack
+# FIXME: Remove this hack - decide how we're going to harmoniously deal with
+# SyntaxTree vs NodeId.
 _expand_forms(ctx, ex::NodeId) = _expand_forms(ctx, SyntaxTree(ctx.graph, ex))
-#-------------------------------------------------------------------------------
-# Pass 3: closure conversion
-#
-# This pass lifts all inner functions to the top level by generating
-# a type for them.
-#
-# For example `f(x) = y->(y+x)` is converted to
-#
-#     immutable yt{T}
-#         x::T
-#     end
-#
-#     (self::yt)(y) = y + self.x
-#
-#     f(x) = yt(x)
 
-#-------------------------------------------------------------------------------
-# Main entry points
-
-# Passes 1-3
-# function symbolic_simplify()
-# end
-
-# Passes 1-4
-# TODO: What's a good name for this? It contains
-# * Symbolic simplification
-# * Tree flattening / conversion to linear IR
-function lower_code(ex)
+function expand_forms(ctx, ex)
+    ensure_attributes!(ctx.graph,
+                       scope=ScopeInfo,
+                       hard_scope=Bool,
+                       var_id=VarId,
+                       lambda_info=LambdaInfo)
+    SyntaxTree(ctx.graph, _expand_forms(ctx, ex))
 end
+

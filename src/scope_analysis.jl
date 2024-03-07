@@ -11,43 +11,32 @@
 #   (var-info-lst captured-var-infos ssavalues static_params)
 # where var-info-lst is a list of var-info records
 
-function is_underscore(ex)
-    k = kind(ex)
-    return (k == K"Identifier" && valueof(ex) == :_) ||
-           (k == K"var" && valueof(ex[1]) == :_)
-end
-
-function identifier_name_str(ex)
-    identifier_name(ex).name_val
-end
-
-function is_valid_name(ex)
-    n = identifier_name_str(ex)
-    n !== "ccall" && n !== "cglobal"
-end
-
+#-------------------------------------------------------------------------------
+# AST traversal functions - useful for performing non-recursive AST traversals
 function _schedule_traverse(stack, e)
-    push!(stack, e)
+    push!(stack, e.id)
     return nothing
 end
 function _schedule_traverse(stack, es::Union{Tuple,Vector,Base.Generator})
-    append!(stack, es)
+    append!(stack, (e.id for e in es))
     return nothing
 end
 
-function traverse_ast(f, ex)
-    todo = [ex]
+function traverse_ast(f, ex::SyntaxTree)
+    graph = ex.graph
+    todo = NodeId[ex.id]
     while !isempty(todo)
         e1 = pop!(todo)
-        f(e1, e->_schedule_traverse(todo, e))
+        f(SyntaxTree(graph, e1), e->_schedule_traverse(todo, e))
     end
 end
 
-function find_in_ast(f, ex)
-    todo = [ex]
+function find_in_ast(f, ex::SyntaxTree)
+    graph = ex.graph
+    todo = [ex.id]
     while !isempty(todo)
         e1 = pop!(todo)
-        res = f(e1, e->_schedule_traverse(todo, e))
+        res = f(SyntaxTree(graph,e1), e->_schedule_traverse(todo, e))
         if !isnothing(res)
             return res
         end
@@ -67,7 +56,7 @@ function find_assigned_vars(ex)
             return nothing
         elseif k == K"="
             v = decl_var(e[1])
-            if !(kind(v) in KSet"SSALabel globalref outerref" || is_underscore(e))
+            if !(kind(v) in KSet"SSALabel globalref outerref" || is_placeholder(e))
                 push!(vars, v)
             end
             traverse(e[2])
@@ -86,7 +75,7 @@ function find_decls(decl_kind, ex)
         if !haschildren(e) || is_quoted(k) || k in KSet"lambda scope_block module toplevel"
             return
         elseif k == decl_kind
-            if !is_underscore(e[1])
+            if !is_placeholder(e[1])
                 push!(vars, decl_var(e[1]))
             end
         else
