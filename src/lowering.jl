@@ -64,7 +64,7 @@ function LoweringContext()
     ensure_attributes!(graph,
                        head=SyntaxHead, green_tree=GreenNode,
                        source_pos=Int, source=SourceFile,
-                       value=Any,
+                       value=Any, name_val=String,
                        scope=ScopeInfo,
                        hard_scope=Bool,
                        var_id=VarId,
@@ -176,7 +176,7 @@ end
 
 function makenode(graph::SyntaxGraph, srcref, head, children...; attrs...)
     id = newnode!(graph)
-    if kind(head) in (K"Identifier", K"core", K"SSALabel") || is_literal(head)
+    if kind(head) in (K"Identifier", K"core", K"top", K"SSALabel", K"Value") || is_literal(head)
         @assert length(children) == 0
     else
         setchildren!(graph, id, children)
@@ -215,7 +215,7 @@ end
 
 # Identifier made of underscores
 function is_placeholder(ex)
-    kind(ex) == K"Identifier" && all(==('_'), ex.value::String)
+    kind(ex) == K"Identifier" && all(==('_'), ex.name_val)
 end
 
 function decl_var(ex)
@@ -224,7 +224,7 @@ end
 
 function expand_let(ctx, ex)
     is_hard_scope = get(ex, :hard_scope, true)
-    blk = expand_forms(ctx, ex[2])
+    blk = ex[2]
     for binding in Iterators.reverse(children(ex[1]))
         kb = kind(binding)
         if is_sym_decl(kb)
@@ -276,6 +276,9 @@ function identifier_name(ex)
     kind(ex) == K"var" ? ex[1] : ex
 end
 
+function expand_call(ctx, ex)
+end
+
 function analyze_function_arg(full_ex)
     name = nothing
     type = nothing
@@ -303,7 +306,7 @@ function analyze_function_arg(full_ex)
             is_slurp = true
             ex = ex[1]
         elseif k == K"meta"
-            @chk ex[1].value == "nospecialize"
+            @chk ex[1].name_val == "nospecialize"
             is_nospecialize = true
             ex = ex[2]
         elseif k == K"="
@@ -321,11 +324,13 @@ function analyze_function_arg(full_ex)
             is_nospecialize=is_nospecialize)
 end
 
-core_ref(ctx, ex, name) = makenode(ctx, ex, K"core", value=name)
+core_ref(ctx, ex, name) = makenode(ctx, ex, K"core", name_val=name)
 Any_type(ctx, ex) = core_ref(ctx, ex, "Any")
 svec_type(ctx, ex) = core_ref(ctx, ex, "svec")
 nothing_(ctx, ex) = core_ref(ctx, ex, "nothing")
 unused(ctx, ex) = core_ref(ctx, ex, "UNUSED")
+
+top_ref(ctx, ex, name) = makenode(ctx, ex, K"top", name_val=name)
 
 function expand_function_def(ctx, ex)
     @chk numchildren(ex) in (1,2)
@@ -435,210 +440,52 @@ end
 
 function _expand_forms(ctx, ex)
     k = kind(ex)
+    # if k == K"call"
+    #     expand_call(ctx, ex)
     if k == K"function"
-        expand_function_def(ctx, ex)
+        _expand_forms(ctx, expand_function_def(ctx, ex))
     elseif k == K"let"
-        return expand_let(ctx, ex)
+        return _expand_forms(ctx, expand_let(ctx, ex))
     elseif is_operator(k) && !haschildren(ex)
-        return makenode(ctx, ex, K"Identifier", value=ex.value)
+        return makenode(ctx, ex, K"Identifier", value=ex.name_val)
     elseif k == K"char" || k == K"var"
-        @assert numchildren(ex) == 1
+        @chk numchildren(ex) == 1
         return ex[1]
-    elseif k == K"string" && numchildren(ex) == 1 && kind(ex[1]) == K"String"
-        return ex[1]
+    elseif k == K"string"
+        if numchildren(ex) == 1 && kind(ex[1]) == K"String"
+            return ex[1]
+        else
+            _expand_forms(ctx,
+                makenode(ctx, ex, K"call", top_ref(ctx, ex, "string"), children(ex)...))
+        end
     elseif !haschildren(ex)
         return ex
     else
         if k == K"="
             @chk numchildren(ex) == 2
-            if kind(ex[1]) != K"Identifier"
+            if kind(ex[1]) ∉ (K"Identifier", K"SSALabel")
                 TODO(ex, "destructuring assignment")
             end
         end
         # FIXME: What to do about the ids vs SyntaxTree?
-        makenode(ctx, ex, head(ex), [_expand_forms(ctx,e) for e in children(ex)]...)
+        mapchildren(_expand_forms, ctx, ex)
     end
 end
 
-#-------------------------------------------------------------------------------
-# Pass 2: analyze scopes (passes 2/3 in flisp code)
-#
-# This pass analyzes the names (variables/constants etc) used in scopes
-#
-# This pass records information about variables used by closure conversion.
-# finds which variables are assigned or captured, and records variable
-# type declarations.
-#
-# This info is recorded by setting the second argument of `lambda` expressions
-# in-place to
-#   (var-info-lst captured-var-infos ssavalues static_params)
-# where var-info-lst is a list of var-info records
-
-function is_underscore(ex)
-    k = kind(ex)
-    return (k == K"Identifier" && valueof(ex) == :_) ||
-           (k == K"var" && valueof(ex[1]) == :_)
-end
-
-function identifier_name_str(ex)
-    identifier_name(ex).value
-end
-
-function is_valid_name(ex)
-    n = identifier_name_str(ex)
-    n !== "ccall" && n !== "cglobal"
-end
-
-function _schedule_traverse(stack, e)
-    push!(stack, e)
-    return nothing
-end
-function _schedule_traverse(stack, es::Union{Tuple,Vector,Base.Generator})
-    append!(stack, es)
-    return nothing
-end
-
-function traverse_ast(f, ex)
-    todo = [ex]
-    while !isempty(todo)
-        e1 = pop!(todo)
-        f(e1, e->_schedule_traverse(todo, e))
-    end
-end
-
-function find_in_ast(f, ex)
-    todo = [ex]
-    while !isempty(todo)
-        e1 = pop!(todo)
-        res = f(e1, e->_schedule_traverse(todo, e))
-        if !isnothing(res)
-            return res
+function mapchildren(f, ctx, ex)
+    id2 = makenode(ctx, ex, head(ex), [f(ctx,e) for e in children(ex)]...)
+    # Copy all attributes.
+    # TODO: Make this type stable and efficient
+    for v in values(ex.graph.attributes)
+        if haskey(v, ex.id)
+            v[id2] = v[ex.id]
         end
     end
-    return nothing
+    return id2
 end
 
-# NB: This only really works after expand_forms has already processed assignments.
-function find_assigned_vars(ex)
-    vars = Vector{typeof(ex)}()
-    traverse_ast(ex) do e, traverse
-        k = kind(e)
-        if !haschildren(e) || is_quoted(k) || k in KSet"lambda scope_block module toplevel"
-            return
-        elseif k == K"method"
-            TODO(e, "method")
-            return nothing
-        elseif k == K"="
-            v = decl_var(e[1])
-            if !(kind(v) in KSet"SSALabel globalref outerref" || is_underscore(e))
-                push!(vars, v)
-            end
-            traverse(e[2])
-        else
-            traverse(children(e))
-        end
-    end
-    var_names = String[v.value for v in vars]
-    return unique(var_names)
-end
-
-function find_decls(decl_kind, ex)
-    vars = Vector{typeof(ex)}()
-    traverse_ast(ex) do e, traverse
-        k = kind(e)
-        if !haschildren(e) || is_quoted(k) || k in KSet"lambda scope_block module toplevel"
-            return
-        elseif k == decl_kind
-            if !is_underscore(e[1])
-                push!(vars, decl_var(e[1]))
-            end
-        else
-            traverse(children(e))
-        end
-    end
-    var_names = String[v.value for v in vars]
-    return unique(var_names)
-end
-
-# Determine whether decl_kind is in the scope of `ex`
-#
-# flisp: find-scope-decl
-function has_scope_decl(decl_kind, ex)
-    find_in_ast(ex) do e, traverse
-        k = kind(e)
-        if !haschildren(e) || is_quoted(k) || k in KSet"lambda scope_block module toplevel"
-            return
-        elseif k == decl_kind
-            return e
-        else
-            traverse(children(ex))
-        end
-    end
-end
-
-# TODO:
-# Incorporate hygenic-scope here so we always have a parent scope when
-# processing variables
-
-# Steps
-# 1. Deal with implicit locals and globals only
-# 2. Add local, global etc later
-
-# struct LambdaVars
-#     # For analyze-variables pass
-#     # var_info_lst::Set{Tuple{Symbol,Symbol}} # ish?
-#     # captured_var_infos ??
-#     # ssalabels::Set{SSALabel}
-#     # static_params::Set{Symbol}
-# end
-
-struct LambdaInfo
-    arg_names::Vector{NodeId}
-    return_type::Union{Nothing,NodeId}
-    arg_vars::Set{VarId}
-    body_vars::Set{VarId}
-end
-
-function LambdaInfo(args, return_type)
-    LambdaInfo([_node_id(a) for a in args],
-               isnothing(return_type) ? nothing : _node_id(return_type),
-               Set{VarId}(),
-               Set{VarId}())
-end
-
-function resolve_scopes(ctx, ex)
-    thk_vars = LambdaInfo()
-    resolve_scopes(ctx, thk_vars, ex)
-end
-
-function resolve_scopes(ctx, lambda_vars, ex)
-    k = kind(ex)
-    if k == K"Identifier"
-        # Look up identifier
-        name = ex.value
-        for s in Iterators.reverse(ctx.scope_stack)
-        end
-    elseif k == K"global"
-        TODO("global")
-    elseif k == K"local" || k == K"local_def"
-        TODO("local") # Remove these
-    # TODO
-    # elseif require_existing_local
-    # elseif locals # return Dict of locals
-    # elseif islocal
-    elseif k == K"lambda"
-        vars = LambdaInfo(ex[1])
-        resolve_scopes(ctx, vars, ex[2])
-    elseif hasattr(ex, :scope)
-        # scope-block
-    end
-    # scope = get(ex, :scope, nothing)
-    # if !isnothing(scope)
-    # for e in children(ex)
-    #     resolve_scopes(ctx, child_scope, e)
-    # end
-end
-
+# FIXME: Remove this hack
+_expand_forms(ctx, ex::NodeId) = _expand_forms(ctx, SyntaxTree(ctx.graph, ex))
 #-------------------------------------------------------------------------------
 # Pass 3: closure conversion
 #

@@ -44,6 +44,7 @@ include("expr.jl")
 include("macroexpand.jl")
 include("syntax_graph.jl")
 include("lowering.jl")
+include("scope_analysis.jl")
 include("linear_ir.jl")
 
 # Hooks to integrate the parser with Base

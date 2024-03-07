@@ -114,9 +114,10 @@ function _convert_nodes(graph::SyntaxGraph, node::SyntaxNode)
     if !isnothing(node.val)
         v = node.val
         if v isa Symbol
-            v = string(v)
+            setattr!(graph, id, name_val=string(v))
+        else
+            setattr!(graph, id, value=v)
         end
-        setattr!(graph, id, value=v)
     end
     # FIXME: remove `isnothing()` check if reverting Unions in SyntaxData
     let r = node.raw
@@ -147,6 +148,10 @@ function Base.getproperty(tree::SyntaxTree, name::Symbol)
     return get(getproperty(getfield(tree, :graph), name), id) do
         error("Property `$name[$id]` not found")
     end
+end
+
+function Base.propertynames(tree::SyntaxTree)
+    attrnames(tree)
 end
 
 function Base.get(tree::SyntaxTree, name::Symbol, default)
@@ -207,7 +212,7 @@ end
 
 function SyntaxTree(graph::SyntaxGraph, node::SyntaxNode)
     ensure_attributes!(graph, head=SyntaxHead, green_tree=GreenNode,
-                       source_pos=Int, source=SourceFile, value=Any)
+                       source_pos=Int, source=SourceFile, value=Any, name_val=String)
     id = _convert_nodes(graph, node)
     return SyntaxTree(graph, id)
 end
@@ -220,12 +225,12 @@ attrsummary(name, value) = string(name)
 attrsummary(name, value::Number) = "$name=$value"
 
 function _value_string(ex)
-    val = get(ex, :value, nothing)
     k = kind(ex)
-    nodestr = k == K"Identifier" ? val :
-              k == K"SSALabel" ? "#SSA-$(ex.var_id)" :
-              k == K"core" ? "core.$(ex.value)" :
-              repr(val)
+    nodestr = k == K"Identifier" ? ex.name_val           :
+              k == K"SSALabel"   ? "#SSA-$(ex.var_id)"   :
+              k == K"core"       ? "core.$(ex.name_val)" :
+              k == K"top"        ? "top.$(ex.name_val)"  :
+              repr(get(ex, :value, nothing))
 end
 
 function _show_syntax_tree(io, current_filename, node, indent, show_byte_offsets)
@@ -248,7 +253,7 @@ function _show_syntax_tree(io, current_filename, node, indent, show_byte_offsets
 
     treestr = string(indent, nodestr)
 
-    std_attrs = Set([:value,:source_pos,:head,:source,:green_tree])
+    std_attrs = Set([:name_val,:value,:source_pos,:head,:source,:green_tree])
     attrstr = join([attrsummary(n, getproperty(node, n)) for n in attrnames(node) if n ∉ std_attrs], ",")
     if !isempty(attrstr)
         treestr = string(rpad(treestr, 40), "│ $attrstr")
