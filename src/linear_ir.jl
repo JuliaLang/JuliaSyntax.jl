@@ -87,7 +87,7 @@ struct LinearIRContext
     var_info::Dict{VarId,VarInfo}
 end
 
-function LinearIRContext(ctx::LoweringContext, lambda_args, return_type)
+function LinearIRContext(ctx, lambda_args, return_type)
     ctx = LinearIRContext(ctx.graph, Vector{Any}(), ctx.next_var_id, return_type)
 end
 

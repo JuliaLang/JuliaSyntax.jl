@@ -65,9 +65,7 @@ function find_scope_vars(ex, children_only)
             return
         elseif k == K"local_def"
             push!(local_def_vars, e[1].name_val)
-        elseif k == K"method"
-            TODO(e, "method")
-            return nothing
+        # elseif k == K"method" TODO static parameters
         elseif k == K"="
             v = decl_var(e[1])
             if !(kind(v) in KSet"SSALabel globalref outerref" || is_placeholder(v))
@@ -162,7 +160,7 @@ function lookup_var(ctx, name)
     return nothing
 end
 
-function with_scope(f::Function, ctx, ex, children_only)
+function resolve_scope!(f::Function, ctx, ex, children_only)
     id_map = Dict{String,VarId}()
     assigned, local_def_vars, used_vars = find_scope_vars(ex, children_only)
     for name in local_def_vars
@@ -173,23 +171,25 @@ function with_scope(f::Function, ctx, ex, children_only)
             id_map[name] = new_var_id(ctx)
         end
     end
+    var_id_stack = ctx.var_id_stack
+    outer_scope = isempty(var_id_stack) ? id_map : var_id_stack[1]
     # Things which aren't assigned further up the stack are newly discovered
     # globals
     for name in used_vars
         if !haskey(id_map, name) && isnothing(lookup_var(ctx, name))
-            first(ctx.var_id_stack)[name] = new_var_id(ctx)
+            outer_scope[name] = new_var_id(ctx)
         end
     end
-    push!(ctx.var_id_stack, id_map)
+    push!(var_id_stack, id_map)
     res = f()
-    pop!(ctx.var_id_stack)
+    pop!(var_id_stack)
     return res
 end
 
 resolve_scopes!(ctx::DesugaringContext, ex) = resolve_scopes!(ScopeResolutionContext(ctx), ex)
 
 function resolve_scopes!(ctx::ScopeResolutionContext, ex)
-    with_scope(ctx, ex, false) do
+    resolve_scope!(ctx, ex, false) do
         resolve_scopes_!(ctx, ex)
     end
 end
@@ -212,13 +212,21 @@ function resolve_scopes_!(ctx, ex)
     # elseif require_existing_local
     # elseif locals # return Dict of locals
     # elseif islocal
-    # elseif k == K"lambda"
-    #     args = ex[1]
-    #     push!(ctx.var_id_stack, Dict{String,VarId}())
-    #     resolve_scopes_!(ctx, ex[3])
-    #     pop!(ctx.var_id_stack)
+    elseif k == K"lambda"
+        # TODO: Lambda captures!
+        info = ex.lambda_info
+        id_map = Dict{String,VarId}()
+        for a in info.args
+            id_map[a.name_val] = new_var_id(ctx)
+        end
+        push!(ctx.var_id_stack, id_map)
+        for a in info.args
+            resolve_scopes!(ctx, a)
+        end
+        resolve_scopes_!(ctx, ex[1])
+        pop!(ctx.var_id_stack)
     elseif k == K"block" && hasattr(ex, :scope_type)
-        with_scope(ctx, ex, true) do
+        resolve_scope!(ctx, ex, true) do
             for e in children(ex)
                 resolve_scopes_!(ctx, e)
             end

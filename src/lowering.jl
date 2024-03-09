@@ -27,6 +27,11 @@ struct SSAVar
     id::VarId
 end
 
+struct LambdaInfo
+    args::Vector{SyntaxTree}
+    ret_var::Union{Nothing,SyntaxTree}
+end
+
 struct DesugaringContext{GraphType}
     graph::GraphType
     next_var_id::Ref{VarId}
@@ -39,7 +44,8 @@ function DesugaringContext()
                        source_pos=Int, source=SourceFile,
                        value=Any, name_val=String,
                        scope_type=Symbol, # :hard or :soft
-                       var_id=VarId)
+                       var_id=VarId,
+                       lambda_info=LambdaInfo)
     DesugaringContext(freeze_attrs(graph),
                     Ref{VarId}(1))
 end
@@ -395,7 +401,8 @@ function expand_function_def(ctx, ex)
                             body,
                             scope_type=:hard)
         end
-        lambda = makenode(ctx, body, K"lambda", arg_names, ret_var, body)
+        lambda = makenode(ctx, body, K"lambda", body,
+                          lambda_info=LambdaInfo(arg_names, ret_var))
         return makenode(ctx, ex, K"method",
                         function_name,
                         preamble,
