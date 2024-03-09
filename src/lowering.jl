@@ -8,7 +8,7 @@ TODO(ex, msg) = throw(LoweringError(ex, "Lowering TODO: $msg"))
 # Lowering types
 
 """
-Unique symbolic identity for a variable within a `LoweringContext`
+Unique symbolic identity for a variable within a `DesugaringContext`
 """
 const VarId = Int
 
@@ -27,53 +27,21 @@ struct SSAVar
     id::VarId
 end
 
-# Mirror of flisp scope info structure
-# struct ScopeInfo
-#     lambda_vars::Union{LambdaLocals,LambdaInfo}
-#     parent::Union{Nothing,ScopeInfo}
-#     args::Set{Symbol}
-#     locals::Set{Symbol}
-#     globals::Set{Symbol}
-#     static_params::Set{Symbol}
-#     renames::Dict{Symbol,Symbol}
-#     implicit_globals::Set{Symbol}
-#     warn_vars::Set{Symbol}
-#     is_soft::Bool
-#     is_hard::Bool
-#     table::Dict{Symbol,Any}
-# end
-
-struct ScopeInfo
-    locals::Dict{Symbol,VarId}
-    is_soft::Bool
-    is_hard::Bool
-end
-
-ScopeInfo(; is_soft=false, is_hard=false) = ScopeInfo(Dict{Symbol,VarId}(), is_soft, is_hard)
-
-struct LoweringContext{GraphType}
+struct DesugaringContext{GraphType}
     graph::GraphType
     next_var_id::Ref{VarId}
-    globals::Dict{Symbol,VarId}
-    scope_stack::Vector{ScopeInfo}  # Stack of name=>id mappings for each scope, innermost scope last.
-    var_info::Dict{VarId,VarInfo}  # id=>info mapping containing information about all variables
 end
 
-function LoweringContext()
+function DesugaringContext()
     graph = SyntaxGraph()
     ensure_attributes!(graph,
                        head=SyntaxHead, green_tree=GreenNode,
                        source_pos=Int, source=SourceFile,
                        value=Any, name_val=String,
-                       scope=ScopeInfo,
-                       hard_scope=Bool,
-                       var_id=VarId,
-                       lambda_info=LambdaInfo)
-    LoweringContext(freeze_attrs(graph),
-                    Ref{VarId}(1),
-                    Dict{Symbol,VarId}(),
-                    Vector{ScopeInfo}(),
-                    Dict{VarId,VarInfo}())
+                       scope_type=Symbol, # :hard or :soft
+                       var_id=VarId)
+    DesugaringContext(freeze_attrs(graph),
+                    Ref{VarId}(1))
 end
 
 #-------------------------------------------------------------------------------
@@ -150,10 +118,6 @@ _node_id(ex::SyntaxTree) = ex.id
 _node_ids() = ()
 _node_ids(c, cs...) = (_node_id(c), _node_ids(cs...)...)
 
-function makenode(ctx::LoweringContext, srcref, head, children...; attrs...)
-    makenode(ctx.graph, srcref, head, _node_ids(children...)...; attrs...)
-end
-
 function makenode(graph::SyntaxGraph, srcref, head, children...; attrs...)
     id = newnode!(graph)
     if kind(head) in (K"Identifier", K"core", K"top", K"SSALabel", K"Value") || is_literal(head)
@@ -173,16 +137,25 @@ function makenode(graph::SyntaxGraph, srcref, head, children...; attrs...)
     return id
 end
 
-# Create a new SSA variable
-function ssavar(ctx::LoweringContext, srcref)
-    id = makenode(ctx, srcref, K"SSALabel", var_id=ctx.next_var_id[])
+function makenode(ctx, srcref, head, children...; attrs...)
+    makenode(ctx.graph, srcref, head, _node_ids(children...)...; attrs...)
+end
+
+function new_var_id(ctx)
+    id = ctx.next_var_id[]
     ctx.next_var_id[] += 1
+    return id
+end
+
+# Create a new SSA variable
+function ssavar(ctx, srcref)
+    id = makenode(ctx, srcref, K"SSALabel", var_id=new_var_id(ctx))
     return id
 end
 
 # Assign `ex` to an SSA variable.
 # Return (variable, assignment_node)
-function assign_tmp(ctx::LoweringContext, ex)
+function assign_tmp(ctx, ex)
     var = ssavar(ctx, ex)
     assign_var = makenode(ctx, ex, K"=", var, ex)
     var, assign_var
@@ -245,7 +218,7 @@ function expand_assignment(ctx, ex)
 end
 
 function expand_let(ctx, ex)
-    is_hard_scope = get(ex, :hard_scope, true)
+    scope_type = get(ex, :scope_type, :hard)
     blk = ex[2]
     for binding in Iterators.reverse(children(ex[1]))
         kb = kind(binding)
@@ -254,7 +227,7 @@ function expand_let(ctx, ex)
                 makenode(ctx, ex, K"local", binding; sr...),
                 blk;
                 sr...,
-                scope=ScopeInfo(is_hard=is_hard_scope)
+                scope_block_type=(is_hard ? :hard : :soft)
             )
         elseif kb == K"=" && numchildren(binding) == 2
             lhs = binding[1]
@@ -267,7 +240,7 @@ function expand_let(ctx, ex)
                         makenode(ctx, lhs, K"local_def", lhs), # TODO: Use K"local" with attr?
                         makenode(ctx, rhs, K"=", decl_var(lhs), tmp),
                         blk;
-                        scope=ScopeInfo(is_hard=is_hard_scope)
+                        scope_type=scope_type
                     )
                 )
             else
@@ -415,15 +388,14 @@ function expand_function_def(ctx, ex)
             body = makenode(ctx, body, K"block",
                             ret_assign,
                             body,
-                            scope=ScopeInfo())
+                            scope_type=:hard)
         else
             ret_var = nothing
             body = makenode(ctx, body, K"block",
                             body,
-                            scope=ScopeInfo())
+                            scope_type=:hard)
         end
-        lambda = makenode(ctx, body, K"lambda", body;
-                          lambda_info=LambdaInfo(arg_names, ret_var))
+        lambda = makenode(ctx, body, K"lambda", arg_names, ret_var, body)
         return makenode(ctx, ex, K"method",
                         function_name,
                         preamble,
@@ -485,11 +457,6 @@ end
 _expand_forms(ctx, ex::NodeId) = _expand_forms(ctx, SyntaxTree(ctx.graph, ex))
 
 function expand_forms(ctx, ex)
-    ensure_attributes!(ctx.graph,
-                       scope=ScopeInfo,
-                       hard_scope=Bool,
-                       var_id=VarId,
-                       lambda_info=LambdaInfo)
     SyntaxTree(ctx.graph, _expand_forms(ctx, ex))
 end
 
