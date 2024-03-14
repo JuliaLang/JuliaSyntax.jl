@@ -14,20 +14,19 @@
 #-------------------------------------------------------------------------------
 # AST traversal functions - useful for performing non-recursive AST traversals
 function _schedule_traverse(stack, e)
-    push!(stack, e.id)
+    push!(stack, e)
     return nothing
 end
-function _schedule_traverse(stack, es::Union{Tuple,Vector,Base.Generator})
-    append!(stack, (e.id for e in es))
+function _schedule_traverse(stack, es::Union{Tuple,AbstractVector,Base.Generator})
+    append!(stack, es)
     return nothing
 end
 
 function traverse_ast(f, exs)
-    graph = first(exs).graph
-    todo = NodeId[e.id for e in exs]
+    todo = SyntaxList(first(exs).graph)
+    append!(todo, exs)
     while !isempty(todo)
-        e1 = pop!(todo)
-        f(SyntaxTree(graph, e1), e->_schedule_traverse(todo, e))
+        f(pop!(todo), e->_schedule_traverse(todo, e))
     end
 end
 
@@ -36,11 +35,11 @@ function traverse_ast(f, ex::SyntaxTree)
 end
 
 function find_in_ast(f, ex::SyntaxTree)
-    graph = ex.graph
-    todo = [ex.id]
+    todo = SyntaxList(ex.graph)
+    push!(todo, ex)
     while !isempty(todo)
         e1 = pop!(todo)
-        res = f(SyntaxTree(graph,e1), e->_schedule_traverse(todo, e))
+        res = f(e1, e->_schedule_traverse(todo, e))
         if !isnothing(res)
             return res
         end
@@ -138,7 +137,7 @@ end
 #     table::Dict{Symbol,Any}
 # end
 
-struct ScopeResolutionContext{GraphType}
+struct ScopeResolutionContext{GraphType} <: AbstractLoweringContext
     graph::GraphType
     next_var_id::Ref{VarId}
     # Stack of name=>id mappings for each scope, innermost scope last.

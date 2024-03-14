@@ -78,9 +78,9 @@ Context for creating linear IR.
 One of these is created per lambda expression to flatten the body down to
 linear IR.
 """
-struct LinearIRContext
-    graph::SyntaxGraph
-    code::Vector{Any}
+struct LinearIRContext{GraphType} <: AbstractLoweringContext
+    graph::GraphType
+    code::SyntaxList{GraphType, Vector{NodeId}}
     next_var_id::Ref{Int}
     lambda_args::Set{VarId}
     return_type::Union{Nothing,NodeId}
@@ -88,11 +88,8 @@ struct LinearIRContext
 end
 
 function LinearIRContext(ctx, lambda_args, return_type)
-    ctx = LinearIRContext(ctx.graph, Vector{Any}(), ctx.next_var_id, return_type)
-end
-
-function makenode(ctx::LinearIRContext, srcref, head, children...; attrs...)
-    makenode(ctx.graph, srcref, head, _node_ids(children...)...; attrs...)
+    ctx = LinearIRContext(ctx.graph, SyntaxList(ctx.graph), ctx.next_var_id,
+                          lambda_args, return_type, Dict{VarId,VarInfo}())
 end
 
 function is_valid_body_ir_argument(ex)
@@ -129,21 +126,21 @@ function compile_args(ctx, args)
     # Otherwise, we need to use ssa values for all arguments to ensure proper
     # left-to-right evaluation semantics.
     all_simple = all(is_simple_arg, args)
-    args_out = Int[]
+    args_out = SyntaxList(ctx)
     for arg in args
-        if (all_simple || is_const_read_arg(ctx, arg)) && is_valid_body_ir_argument(arg)
-            push!(args_out, arg)
+        arg_val = compile(ctx, arg, true, false)
+        if (all_simple || is_const_read_arg(ctx, arg_val)) && is_valid_body_ir_argument(arg_val)
+            push!(args_out, arg_val)
         else
-            push!(args_out, emit_assign_tmp(ctx, arg))
+            push!(args_out, emit_assign_tmp(ctx, arg_val))
         end
     end
     return args_out
 end
 
 function emit(ctx::LinearIRContext, ex)
-    id = _node_id(ex)
-    push!(ctx.code, id)
-    return id
+    push!(ctx.code, ex)
+    return ex
 end
 
 function emit(ctx::LinearIRContext, srcref, k, args...)
@@ -153,10 +150,10 @@ end
 # Emit computation of ex, assigning the result to an ssavar and returning that
 function emit_assign_tmp(ctx::LinearIRContext, ex)
     # TODO: We could replace this with an index into the code array right away?
-    id = makenode(ctx, ex, K"SSALabel", var_id=ctx.next_var_id[])
+    tmp = makenode(ctx, ex, K"SSALabel", var_id=ctx.next_var_id[])
     ctx.next_var_id[] += 1
-    emit(ctx, ex, K"=", id, ex)
-    return id
+    emit(ctx, ex, K"=", tmp, ex)
+    return tmp
 end
 
 function emit_return(ctx, srcref, ex)
@@ -183,10 +180,9 @@ function emit_assignment(ctx, srcref, lhs, rhs)
     else
         # in unreachable code (such as after return); still emit the assignment
         # so that the structure of those uses is preserved
-        # TODO: What should null handling look like?
-        emit(ctx, rhs, K"=", lhs, makenode(ctx, srcref, K"Identifier", value=:null))
+        emit(ctx, rhs, K"=", lhs, nothing_(ctx, srcref))
+        nothing
     end
-    nothing
 end
 
 # This pass behaves like an interpreter on the given code.
@@ -197,12 +193,29 @@ end
 # TODO: is it ok to return `nothing` if we have no value in some sense
 function compile(ctx::LinearIRContext, ex, needs_value, in_tail_pos)
     k = kind(ex)
-    if k == K"call" || k == K"new"
+    if k == K"Identifier" || is_literal(k) || k == K"SSALabel" || k == K"quote" || k == K"inert" ||
+            k == K"top" || k == K"core"
+        # TODO: other kinds: copyast the_exception $ globalref outerref thismodule cdecl stdcall fastcall thiscall llvmcall
+        if in_tail_pos
+            emit_return(ctx, ex, ex)
+        elseif needs_value
+            if is_placeholder(ex)
+                # TODO: ensure outterref, globalref work here
+                throw(LoweringError(ex, "all-underscore identifiers are write-only and their values cannot be used in expressions"))
+            end
+            ex
+        else
+            if k == K"Identifier"
+                emit(ctx, ex) # keep symbols for undefined-var checking
+            end
+            nothing
+        end
+    elseif k == K"call"
         # TODO k ∈ splatnew foreigncall cfunction new_opaque_closure cglobal
         args = compile_args(ctx, children(ex))
-        callex = makenode(ctx, ex, k, args...)
+        callex = makenode(ctx, ex, k, args)
         if in_tail_pos
-            emit_return(ctx, callex)
+            emit_return(ctx, ex, callex)
         elseif needs_value
             callex
         else
@@ -225,14 +238,62 @@ function compile(ctx::LinearIRContext, ex, needs_value, in_tail_pos)
         else
             emit_assignment(ctx, ex, lhs, rhs)
         end
+    elseif k == K"block"
+        nc = numchildren(ex)
+        for i in 1:nc
+            islast = i == nc
+            compile(ctx, ex[i], islast && needs_value, islast && in_tail_pos)
+        end
+    elseif k == K"return"
+        compile(ctx, ex[1], true, true)
+        nothing
+    elseif k == K"method"
+        TODO(ex, "linearize method")
+    elseif k == K"lambda"
+        lam = compile_lambda(ctx, ex)
+        if in_tail_pos
+            emit_return(ctx, ex, lam)
+        elseif needs_value
+            lam
+        else
+            emit(ctx, lam)
+        end
+    elseif k == K"global"
+        if needs_value
+            throw(LoweringError(ex, "misplaced `global` declaration"))
+        end
+        emit(ctx, ex)
+        nothing
+    elseif k == K"local_def" || k == K"local"
+        nothing
+    else
+        throw(LoweringError(ex, "Invalid syntax"))
     end
 end
 
 # flisp: compile-body
-function compile_lambda(expansion_ctx, ex)
+function compile_body(ctx, ex)
+    # TODO: Generate assignments to newly named mutable vars, for every argument
+    # which is reassigned.
+    compile(ctx, ex, true, true)
+    # TODO: Fix any gotos
+    # TODO: Filter out any newvar nodes where the arg is definitely initialized
+    # TODO: Add assignments for reassigned arguments to body
+end
+
+function compile_lambda(ctx, ex)
+    TODO(ex, "compile_lambda args")
     lambda_args = Set{VarId}()
     return_type = nothing
-    ctx = LinearIRContext(expansion_ctx, lambda_args, return_type)
-    compile(ctx, ex[3])
+    ctx = LinearIRContext(outer_ctx, lambda_args, return_type)
+    compile_body(ctx, ex[3])
+end
+
+function compile_toplevel(outer_ctx, ex)
+    lambda_args = Set{VarId}()
+    return_type = nothing
+    ctx = LinearIRContext(outer_ctx, lambda_args, return_type)
+    compile_body(ctx, ex)
+    ctx
 end
 

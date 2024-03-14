@@ -135,6 +135,7 @@ function _convert_nodes(graph::SyntaxGraph, node::SyntaxNode)
     return id
 end
 
+#-------------------------------------------------------------------------------
 struct SyntaxTree{GraphType}
     graph::GraphType
     id::NodeId
@@ -169,7 +170,7 @@ function numchildren(tree::SyntaxTree)
 end
 
 function children(tree::SyntaxTree)
-    (SyntaxTree(tree.graph, c) for c in children(tree.graph, tree.id))
+    SyntaxList(tree.graph, children(tree.graph, tree.id))
 end
 
 function child(tree::SyntaxTree, i::Integer)
@@ -226,11 +227,19 @@ attrsummary(name, value::Number) = "$name=$value"
 
 function _value_string(ex)
     k = kind(ex)
-    nodestr = k == K"Identifier" ? ex.name_val           :
-              k == K"SSALabel"   ? "#SSA-$(ex.var_id)"   :
-              k == K"core"       ? "core.$(ex.name_val)" :
-              k == K"top"        ? "top.$(ex.name_val)"  :
-              repr(get(ex, :value, nothing))
+    str = k == K"Identifier" ? ex.name_val           :
+          k == K"SSALabel"   ? "#SSA" :
+          k == K"core"       ? "core.$(ex.name_val)" :
+          k == K"top"        ? "top.$(ex.name_val)"  :
+          repr(get(ex, :value, nothing))
+    id = get(ex, :var_id, nothing)
+    if !isnothing(id)
+        idstr = replace(string(id),
+                        "0"=>"₀", "1"=>"₁", "2"=>"₂", "3"=>"₃", "4"=>"₄",
+                        "5"=>"₅", "6"=>"₆", "7"=>"₇", "8"=>"₈", "9"=>"₉")
+        str = "$(str).$idstr"
+    end
+    return str
 end
 
 function _show_syntax_tree(io, current_filename, node, indent, show_byte_offsets)
@@ -253,7 +262,7 @@ function _show_syntax_tree(io, current_filename, node, indent, show_byte_offsets
 
     treestr = string(indent, nodestr)
 
-    std_attrs = Set([:name_val,:value,:source_pos,:head,:source,:green_tree])
+    std_attrs = Set([:name_val,:value,:source_pos,:head,:source,:green_tree,:var_id])
     attrstr = join([attrsummary(n, getproperty(node, n)) for n in attrnames(node) if n ∉ std_attrs], ",")
     if !isempty(attrstr)
         treestr = string(rpad(treestr, 40), "│ $attrstr")
@@ -305,6 +314,63 @@ end
 function Base.show(io::IO, node::SyntaxTree)
     _show_syntax_tree_sexpr(io, node)
 end
+
+#-------------------------------------------------------------------------------
+# Lightweight vector of nodes ids with associated pointer to graph stored separately.
+struct SyntaxList{GraphType, NodeIdVecType} <: AbstractVector{SyntaxTree}
+    graph::GraphType
+    ids::NodeIdVecType
+end
+
+function SyntaxList(graph::SyntaxGraph, ids::AbstractVector{NodeId})
+    SyntaxList{typeof(graph), typeof(ids)}(graph, ids)
+end
+
+SyntaxList(graph::SyntaxGraph) = SyntaxList(graph, Vector{NodeId}())
+SyntaxList(ctx) = SyntaxList(ctx.graph)
+
+Base.size(v::SyntaxList) = size(v.ids)
+
+Base.IndexStyle(::Type{<:SyntaxList}) = IndexLinear()
+
+Base.getindex(v::SyntaxList, i::Int) = SyntaxTree(v.graph, v.ids[i])
+
+function Base.setindex!(v::SyntaxList, tree::SyntaxTree, i::Int)
+    v.graph === tree.graph || error("Mismatching syntax graphs")
+    v.ids[i] = tree.id
+end
+
+function Base.setindex!(v::SyntaxList, id::NodeId, i::Int)
+    v.ids[i] = id
+end
+
+function Base.push!(v::SyntaxList, tree::SyntaxTree)
+    v.graph === tree.graph || error("Mismatching syntax graphs")
+    push!(v.ids, tree.id)
+end
+
+function Base.append!(v::SyntaxList, exs)
+    for e in exs
+        push!(v, e)
+    end
+    v
+end
+
+function Base.append!(v::SyntaxList, exs::SyntaxList)
+    v.graph === exs.graph || error("Mismatching syntax graphs")
+    append!(v.ids, exs.ids)
+    v
+end
+
+function Base.push!(v::SyntaxList, id::NodeId)
+    push!(v.ids, id)
+end
+
+function Base.pop!(v::SyntaxList)
+    SyntaxTree(v.graph, pop!(v.ids))
+end
+
+#-------------------------------------------------------------------------------
 
 function build_tree(::Type{SyntaxTree}, stream::ParseStream; kws...)
     SyntaxTree(build_tree(SyntaxNode, stream; kws...))

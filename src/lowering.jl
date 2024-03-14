@@ -32,7 +32,9 @@ struct LambdaInfo
     ret_var::Union{Nothing,SyntaxTree}
 end
 
-struct DesugaringContext{GraphType}
+abstract type AbstractLoweringContext end
+
+struct DesugaringContext{GraphType} <: AbstractLoweringContext
     graph::GraphType
     next_var_id::Ref{VarId}
 end
@@ -124,7 +126,7 @@ _node_id(ex::SyntaxTree) = ex.id
 _node_ids() = ()
 _node_ids(c, cs...) = (_node_id(c), _node_ids(cs...)...)
 
-function makenode(graph::SyntaxGraph, srcref, head, children...; attrs...)
+function _makenode(graph::SyntaxGraph, srcref, head, children; attrs...)
     id = newnode!(graph)
     if kind(head) in (K"Identifier", K"core", K"top", K"SSALabel", K"Value") || is_literal(head)
         @assert length(children) == 0
@@ -140,28 +142,49 @@ function makenode(graph::SyntaxGraph, srcref, head, children...; attrs...)
              source=srcref.source,
              green_tree=srcref.green_tree,
              source_pos=srcref.source_pos)
-    return id
+    return SyntaxTree(graph, id)
 end
 
-function makenode(ctx, srcref, head, children...; attrs...)
-    makenode(ctx.graph, srcref, head, _node_ids(children...)...; attrs...)
+function makenode(graph::SyntaxGraph, srcref, head, children...; attrs...)
+    _makenode(graph, srcref, head, children; attrs...)
 end
 
-function new_var_id(ctx)
+function makenode(ctx::AbstractLoweringContext, srcref, head, children::SyntaxTree...; attrs...)
+    _makenode(ctx.graph, srcref, head, _node_ids(children...); attrs...)
+end
+
+function makenode(ctx::AbstractLoweringContext, srcref, head, children::SyntaxList; attrs...)
+    ctx.graph === children.graph || error("Mismatching graphs")
+    _makenode(ctx.graph, srcref, head, children.ids; attrs...)
+end
+
+function mapchildren(f, ctx::AbstractLoweringContext, ex)
+    ex2 = makenode(ctx, ex, head(ex), [f(ctx,e) for e in children(ex)]...)
+    # Copy all attributes.
+    # TODO: Make this type stable and efficient
+    for v in values(ex.graph.attributes)
+        if haskey(v, ex.id)
+            v[ex2.id] = v[ex.id]
+        end
+    end
+    return ex2
+end
+
+function new_var_id(ctx::AbstractLoweringContext)
     id = ctx.next_var_id[]
     ctx.next_var_id[] += 1
     return id
 end
 
 # Create a new SSA variable
-function ssavar(ctx, srcref)
+function ssavar(ctx::AbstractLoweringContext, srcref)
     id = makenode(ctx, srcref, K"SSALabel", var_id=new_var_id(ctx))
     return id
 end
 
 # Assign `ex` to an SSA variable.
 # Return (variable, assignment_node)
-function assign_tmp(ctx, ex)
+function assign_tmp(ctx::AbstractLoweringContext, ex)
     var = ssavar(ctx, ex)
     assign_var = makenode(ctx, ex, K"=", var, ex)
     var, assign_var
@@ -414,14 +437,14 @@ function expand_function_def(ctx, ex)
     end
 end
 
-function _expand_forms(ctx, ex)
+function expand_forms(ctx::DesugaringContext, ex::SyntaxTree)
     k = kind(ex)
     # if k == K"call"
     #     expand_call(ctx, ex)
     if k == K"function"
-        _expand_forms(ctx, expand_function_def(ctx, ex))
+        expand_forms(ctx, expand_function_def(ctx, ex))
     elseif k == K"let"
-        return _expand_forms(ctx, expand_let(ctx, ex))
+        return expand_forms(ctx, expand_let(ctx, ex))
     elseif is_operator(k) && !haschildren(ex)
         return makenode(ctx, ex, K"Identifier", value=ex.name_val)
     elseif k == K"char" || k == K"var"
@@ -431,9 +454,12 @@ function _expand_forms(ctx, ex)
         if numchildren(ex) == 1 && kind(ex[1]) == K"String"
             return ex[1]
         else
-            _expand_forms(ctx,
+            expand_forms(ctx,
                 makenode(ctx, ex, K"call", top_ref(ctx, ex, "string"), children(ex)...))
         end
+    elseif k == K"tuple"
+        # TODO: named tuples
+        expand_forms(ctx, makenode(ctx, ex, K"call", core_ref(ctx, ex, "tuple"), children(ex)...))
     elseif !haschildren(ex)
         return ex
     else
@@ -443,27 +469,7 @@ function _expand_forms(ctx, ex)
                 TODO(ex, "destructuring assignment")
             end
         end
-        mapchildren(_expand_forms, ctx, ex)
+        mapchildren(expand_forms, ctx, ex)
     end
-end
-
-function mapchildren(f, ctx, ex)
-    id2 = makenode(ctx, ex, head(ex), [f(ctx,e) for e in children(ex)]...)
-    # Copy all attributes.
-    # TODO: Make this type stable and efficient
-    for v in values(ex.graph.attributes)
-        if haskey(v, ex.id)
-            v[id2] = v[ex.id]
-        end
-    end
-    return id2
-end
-
-# FIXME: Remove this hack - decide how we're going to harmoniously deal with
-# SyntaxTree vs NodeId.
-_expand_forms(ctx, ex::NodeId) = _expand_forms(ctx, SyntaxTree(ctx.graph, ex))
-
-function expand_forms(ctx, ex)
-    SyntaxTree(ctx.graph, _expand_forms(ctx, ex))
 end
 
