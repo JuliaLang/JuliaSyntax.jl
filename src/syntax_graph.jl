@@ -228,7 +228,7 @@ attrsummary(name, value::Number) = "$name=$value"
 function _value_string(ex)
     k = kind(ex)
     str = k == K"Identifier" ? ex.name_val           :
-          k == K"SSALabel"   ? "#SSA" :
+          k == K"SSAValue"   ? "#SSA" :
           k == K"core"       ? "core.$(ex.name_val)" :
           k == K"top"        ? "top.$(ex.name_val)"  :
           repr(get(ex, :value, nothing))

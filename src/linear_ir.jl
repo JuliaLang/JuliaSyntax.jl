@@ -82,14 +82,13 @@ struct LinearIRContext{GraphType} <: AbstractLoweringContext
     graph::GraphType
     code::SyntaxList{GraphType, Vector{NodeId}}
     next_var_id::Ref{Int}
-    lambda_args::Set{VarId}
     return_type::Union{Nothing,NodeId}
     var_info::Dict{VarId,VarInfo}
 end
 
-function LinearIRContext(ctx, lambda_args, return_type)
+function LinearIRContext(ctx, return_type)
     ctx = LinearIRContext(ctx.graph, SyntaxList(ctx.graph), ctx.next_var_id,
-                          lambda_args, return_type, Dict{VarId,VarInfo}())
+                          return_type, Dict{VarId,VarInfo}())
 end
 
 function is_valid_body_ir_argument(ex)
@@ -118,6 +117,14 @@ function is_const_read_arg(ctx, ex)
     return is_simple_atom(ex) ||
            single_assign_var(ctx, ex) ||
            k == K"quote" || k == K"inert" || k == K"top" || k == K"core"
+end
+
+function is_valid_ir_rvalue(lhs, rhs)
+    return kind(lhs) == K"SSAValue"  ||
+           is_valid_ir_argument(rhs) ||
+           (kind(lhs) == K"Identifier" &&
+            # FIXME: add: splatnew isdefined invoke cfunction gc_preserve_begin copyast new_opaque_closure globalref outerref
+            kind(rhs) in KSet"new the_exception call foreigncall")
 end
 
 # evaluate the arguments of a call, creating temporary locations as needed
@@ -150,7 +157,7 @@ end
 # Emit computation of ex, assigning the result to an ssavar and returning that
 function emit_assign_tmp(ctx::LinearIRContext, ex)
     # TODO: We could replace this with an index into the code array right away?
-    tmp = makenode(ctx, ex, K"SSALabel", var_id=ctx.next_var_id[])
+    tmp = makenode(ctx, ex, K"SSAValue", var_id=ctx.next_var_id[])
     ctx.next_var_id[] += 1
     emit(ctx, ex, K"=", tmp, ex)
     return tmp
@@ -166,11 +173,12 @@ function emit_return(ctx, srcref, ex)
     if !(is_valid_ir_argument(ex) || head(ex) == K"lambda")
         ex = emit_assign_tmp(ctx, ex)
     end
+    # TODO: if !isnothing(ctx.return_type) ...
     emit(ctx, srcref, K"return", ex)
 end
 
 function emit_assignment(ctx, srcref, lhs, rhs)
-    if isnothing(rhs)
+    if !isnothing(rhs)
         if is_valid_ir_rvalue(lhs, rhs)
             emit(ctx, srcref, K"=", lhs, rhs)
         else
@@ -193,7 +201,7 @@ end
 # TODO: is it ok to return `nothing` if we have no value in some sense
 function compile(ctx::LinearIRContext, ex, needs_value, in_tail_pos)
     k = kind(ex)
-    if k == K"Identifier" || is_literal(k) || k == K"SSALabel" || k == K"quote" || k == K"inert" ||
+    if k == K"Identifier" || is_literal(k) || k == K"SSAValue" || k == K"quote" || k == K"inert" ||
             k == K"top" || k == K"core"
         # TODO: other kinds: copyast the_exception $ globalref outerref thismodule cdecl stdcall fastcall thiscall llvmcall
         if in_tail_pos
@@ -271,29 +279,123 @@ function compile(ctx::LinearIRContext, ex, needs_value, in_tail_pos)
     end
 end
 
+
+#-------------------------------------------------------------------------------
+
+# Recursively renumber an expression within linear IR
+# flisp: renumber-stuff
+function _renumber(ctx, ssa_rewrite, arg_rewrite, label_table, ex)
+    k = kind(ex)
+    if k == K"Identifier"
+        id = ex.var_id
+        newarg = isnothing(arg_rewrite) ? nothing : get(arg_rewrite, id, nothing)
+        if !isnothing(newarg)
+            makenode(ctx, ex, newarg[1]; var_id=newarg[2])
+        else
+            # TODO: Static parameters
+            ex
+        end
+    elseif k == K"outerref" || k == K"meta"
+        TODO(ex, "_renumber $k")
+    elseif is_literal(k) || is_quoted(k) || k == K"global"
+        ex
+    elseif k == K"SSAValue"
+        makenode(ctx, ex, K"SSAValue"; var_id=ssa_rewrite[ex.var_id])
+    elseif k == K"goto" || k == K"enter" || k == K"gotoifnot"
+        TODO(ex, "_renumber $k")
+    # elseif k == K"lambda"
+    #     renumber_lambda(ctx, ex)
+    else
+        mapchildren(ctx, ex) do e
+            _renumber(ctx, ssa_rewrite, arg_rewrite, label_table, e)
+        end
+        # TODO: foreigncall error check:
+        # "ccall function name and library expression cannot reference local variables"
+    end
+end
+
+# flisp: renumber-lambda, compact-ir
+function renumber_body(ctx, input_code, arg_rewrite)
+    # Step 1: Remove any assignments to SSA variables, record the indices of labels
+    ssa_rewrite = Dict{VarId,VarId}()
+    label_table = Dict{String,Int}()
+    code = SyntaxList(ctx)
+    for ex in input_code
+        k = kind(ex)
+        ex_out = nothing
+        if k == K"=" && kind(ex[1]) == K"SSAValue"
+            lhs_id = ex[1].var_id
+            if kind(ex[2]) == K"SSAValue"
+                # For SSA₁ = SSA₂, record that all uses of SSA₁ should be replaced by SSA₂
+                ssa_rewrite[lhs_id] = ssa_rewrite[ex[2].var_id]
+            else
+                # Otherwise, record which `code` index this SSA value refers to
+                ssa_rewrite[lhs_id] = length(code) + 1
+                ex_out = ex[2]
+            end
+        elseif k == K"label"
+            label_table[ex.name_val] = length(code) + 1
+        else
+            ex_out = ex
+        end
+        if !isnothing(ex_out)
+            push!(code, ex_out)
+        end
+    end
+    # Step 2: Translate any SSA uses and labels into indices in the code table
+    # Translate function arguments into slot indices
+    for i in 1:length(code)
+        code[i] = _renumber(ctx, ssa_rewrite, arg_rewrite, label_table, code[i])
+    end
+    code
+end
+
+function renumber_lambda(ctx, lambda_info, code)
+    arg_rewrite = Dict{VarId,Tuple{Kind,Int}}()
+    # lambda arguments become K"slot"; type parameters become K"static_parameter"
+    info = ex.lambda_info
+    for (i,arg) in enumerate(info.args)
+        arg_rewrite[arg.var_id] = (K"slot",i)
+    end
+    # TODO: add static_parameter here also
+    renumber_body(ctx, code, arg_rewrite)
+end
+
+# Our Julia version-independent proxy for CodeInfo ?
+# struct LambdaIR
+#     args::SyntaxList
+#     code::SyntaxList
+#     var_info # ::Dict{VarId,VarInfo}
+# end
+
 # flisp: compile-body
 function compile_body(ctx, ex)
-    # TODO: Generate assignments to newly named mutable vars, for every argument
-    # which is reassigned.
     compile(ctx, ex, true, true)
     # TODO: Fix any gotos
     # TODO: Filter out any newvar nodes where the arg is definitely initialized
-    # TODO: Add assignments for reassigned arguments to body
 end
 
 function compile_lambda(ctx, ex)
-    TODO(ex, "compile_lambda args")
+    info = ex.lambda_info
     lambda_args = Set{VarId}()
     return_type = nothing
-    ctx = LinearIRContext(outer_ctx, lambda_args, return_type)
-    compile_body(ctx, ex[3])
+    # TODO: Add assignments for reassigned arguments to body using info.args
+    ctx = LinearIRContext(outer_ctx, return_type)
+    compile_body(ctx, ex[1])
+    # renumber_lambda(ctx, info
+    # FIXME: Our replacement for CodeInfo
+    #var_info = nothing # FIXME
+    #makenode(ctx, ex, K"Value"; value=LambdaIR(info.args, ctx.code, var_info))
 end
 
 function compile_toplevel(outer_ctx, ex)
     lambda_args = Set{VarId}()
     return_type = nothing
-    ctx = LinearIRContext(outer_ctx, lambda_args, return_type)
+    ctx = LinearIRContext(outer_ctx, return_type)
     compile_body(ctx, ex)
-    ctx
+    arg_rewrite = Dict{VarId,Tuple{Kind,Int}}()
+    renumber_body(ctx, ctx.code, arg_rewrite)
+    #var_info = nothing # FIXME
+    #makenode(ctx, ex, K"Value"; value=LambdaIR(SyntaxList(ctx), ctx.code, var_info))
 end
 

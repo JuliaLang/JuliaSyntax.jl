@@ -67,7 +67,7 @@ function find_scope_vars(ex, children_only)
         # elseif k == K"method" TODO static parameters
         elseif k == K"="
             v = decl_var(e[1])
-            if !(kind(v) in KSet"SSALabel globalref outerref" || is_placeholder(v))
+            if !(kind(v) in KSet"SSAValue globalref outerref" || is_placeholder(v))
                 push!(assigned_vars, v.name_val)
             end
             traverse(e[2])
@@ -117,7 +117,7 @@ end
 #     # For analyze-variables pass
 #     # var_info_lst::Set{Tuple{Symbol,Symbol}} # ish?
 #     # captured_var_infos ??
-#     # ssalabels::Set{SSALabel}
+#     # ssalabels::Set{SSAValue}
 #     # static_params::Set{Symbol}
 # end
 

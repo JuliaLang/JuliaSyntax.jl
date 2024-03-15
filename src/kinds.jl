@@ -922,6 +922,7 @@ const _kind_names =
     "BEGIN_LOWERING_KINDS"
         # Compiler metadata hints
         "meta"
+        "extension"
         # A literal Julia value of any kind, as might be inserted by the AST
         # during macro expansion
         "Value"
@@ -929,8 +930,8 @@ const _kind_names =
         "inline"
         "noinline"
         "loopinfo"
-        # Identifier for a value which is only assigned once ("SSA value")
-        "SSALabel"
+        # Identifier for a value which is only assigned once
+        "SSAValue"
         # Scope expressions `(hygienic_scope ex s)` mean `ex` should be
         # interpreted as being in scope `s`.
         "hygienic_scope"
@@ -955,11 +956,13 @@ const _kind_names =
         "outerref"
         "enter"
         "leave"
+        "label"
         "goto"
         "gotoifnot"
         "trycatchelse"
         "tryfinally"
         "method"
+        "slot"
     "END_LOWERING_KINDS"
 ]
 

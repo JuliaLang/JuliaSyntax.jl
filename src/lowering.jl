@@ -28,7 +28,8 @@ struct SSAVar
 end
 
 struct LambdaInfo
-    args::Vector{SyntaxTree}
+    # TODO: Make this concretely typed
+    args::SyntaxList
     ret_var::Union{Nothing,SyntaxTree}
 end
 
@@ -128,7 +129,7 @@ _node_ids(c, cs...) = (_node_id(c), _node_ids(cs...)...)
 
 function _makenode(graph::SyntaxGraph, srcref, head, children; attrs...)
     id = newnode!(graph)
-    if kind(head) in (K"Identifier", K"core", K"top", K"SSALabel", K"Value") || is_literal(head)
+    if kind(head) in (K"Identifier", K"core", K"top", K"SSAValue", K"Value") || is_literal(head)
         @assert length(children) == 0
     else
         setchildren!(graph, id, children)
@@ -158,8 +159,12 @@ function makenode(ctx::AbstractLoweringContext, srcref, head, children::SyntaxLi
     _makenode(ctx.graph, srcref, head, children.ids; attrs...)
 end
 
-function mapchildren(f, ctx::AbstractLoweringContext, ex)
-    ex2 = makenode(ctx, ex, head(ex), [f(ctx,e) for e in children(ex)]...)
+function mapchildren(f, ctx, ex)
+    cs = SyntaxList(ctx)
+    for e in children(ex)
+        push!(cs, f(e))
+    end
+    ex2 = makenode(ctx, ex, head(ex), cs)
     # Copy all attributes.
     # TODO: Make this type stable and efficient
     for v in values(ex.graph.attributes)
@@ -178,7 +183,7 @@ end
 
 # Create a new SSA variable
 function ssavar(ctx::AbstractLoweringContext, srcref)
-    id = makenode(ctx, srcref, K"SSALabel", var_id=new_var_id(ctx))
+    id = makenode(ctx, srcref, K"SSAValue", var_id=new_var_id(ctx))
     return id
 end
 
@@ -465,11 +470,11 @@ function expand_forms(ctx::DesugaringContext, ex::SyntaxTree)
     else
         if k == K"="
             @chk numchildren(ex) == 2
-            if kind(ex[1]) ∉ (K"Identifier", K"SSALabel")
+            if kind(ex[1]) ∉ (K"Identifier", K"SSAValue")
                 TODO(ex, "destructuring assignment")
             end
         end
-        mapchildren(expand_forms, ctx, ex)
+        mapchildren(e->expand_forms(ctx,e), ctx, ex)
     end
 end
 
