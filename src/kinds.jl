@@ -25,6 +25,7 @@ const _kind_names =
         "ErrorOverLongCharacter"
         "ErrorInvalidUTF8"
         "ErrorInvisibleChar"
+        "ErrorIdentifierStart"
         "ErrorUnknownCharacter"
         "ErrorBidiFormatting"
         # Generic error
@@ -1102,6 +1103,7 @@ const _token_error_descriptions = Dict{Kind, String}(
     K"ErrorOverLongCharacter"=>"character literal contains multiple characters",
     K"ErrorInvalidUTF8"=>"invalid UTF-8 sequence",
     K"ErrorInvisibleChar"=>"invisible character",
+    K"ErrorIdentifierStart" => "character cannot begin an identifier",
     K"ErrorUnknownCharacter"=>"unknown unicode character",
     K"ErrorBidiFormatting"=>"unbalanced bidirectional unicode formatting",
     K"ErrorInvalidOperator" => "invalid operator",
