@@ -39,6 +39,9 @@
             Expr(:toplevel, LineNumberNode(2), :a, LineNumberNode(3), :b)
         @test parseall(Expr, "a\nb\n#==#") ==
             Expr(:toplevel, LineNumberNode(1), :a, LineNumberNode(2), :b)
+
+        # unknown kwargs error (#416)
+        @test_throws MethodError parseall(Expr, "a\nb"; ignore_error=true)
     end
 
     @testset "IO input" begin
