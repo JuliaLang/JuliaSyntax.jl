@@ -137,15 +137,35 @@ end
 #     table::Dict{Symbol,Any}
 # end
 
+"""
+Metadata about a variable name - whether it's a local, etc
+"""
+struct VarInfo
+    name::String
+    islocal::Bool          # Local variable (if unset, variable is global)
+    isarg::Bool            # Is a function argument
+    is_single_assign::Bool # Single assignment
+end
+
 struct ScopeResolutionContext{GraphType} <: AbstractLoweringContext
     graph::GraphType
     next_var_id::Ref{VarId}
     # Stack of name=>id mappings for each scope, innermost scope last.
     var_id_stack::Vector{Dict{String,VarId}}
+    # Stack of var `id`s for lambda (or toplevel thunk) being processed, innermost last.
+    lambda_vars::Vector{Set{VarId}}
+    # Metadata about variables. There's only one map for this, as var_id is is
+    # unique across the context, even for same-named vars in unrelated local
+    # scopes.
+    var_info::Dict{VarId,VarInfo}
 end
 
 function ScopeResolutionContext(ctx::DesugaringContext)
-    ScopeResolutionContext(ctx.graph, ctx.next_var_id, Vector{Dict{String,VarId}}())
+    graph = ensure_attributes(ctx.graph, lambda_vars=Set{VarId})
+    ScopeResolutionContext(graph, ctx.next_var_id,
+                           Vector{Dict{String,VarId}}(),
+                           [Set{VarId}()],
+                           Dict{VarId,VarInfo}())
 end
 
 function lookup_var(ctx, name)
@@ -159,38 +179,47 @@ function lookup_var(ctx, name)
     return nothing
 end
 
-function resolve_scope!(f::Function, ctx, ex, children_only)
+function new_var(ctx, name; isarg=false, islocal=isarg)
+    id = new_var_id(ctx)
+    ctx.var_info[id] = VarInfo(name, islocal, isarg, false)
+    push!(last(ctx.lambda_vars), id)
+    id
+end
+
+function resolve_scope!(f::Function, ctx, ex, is_toplevel)
     id_map = Dict{String,VarId}()
-    assigned, local_def_vars, used_vars = find_scope_vars(ex, children_only)
+    assigned, local_def_vars, used_vars = find_scope_vars(ex, !is_toplevel)
     for name in local_def_vars
-        id_map[name] = new_var_id(ctx)
+        id_map[name] = new_var(ctx, name, islocal=true)
     end
     for name in assigned
-        if !haskey(id_map, name)
-            id_map[name] = new_var_id(ctx)
+        if !haskey(id_map, name) && isnothing(lookup_var(ctx, name))
+            # Previously unknown assigned vars are impicit locals or globals
+            id_map[name] = new_var(ctx, name, islocal=!is_toplevel)
         end
     end
-    var_id_stack = ctx.var_id_stack
-    outer_scope = isempty(var_id_stack) ? id_map : var_id_stack[1]
-    # Things which aren't assigned further up the stack are newly discovered
-    # globals
+    outer_scope = is_toplevel ? id_map : ctx.var_id_stack[1]
     for name in used_vars
         if !haskey(id_map, name) && isnothing(lookup_var(ctx, name))
-            outer_scope[name] = new_var_id(ctx)
+            # Identifiers which weren't discovered further up the stack are
+            # newly discovered globals
+            outer_scope[name] = new_var(ctx, name, islocal=false)
         end
     end
-    push!(var_id_stack, id_map)
+    push!(ctx.var_id_stack, id_map)
     res = f()
-    pop!(var_id_stack)
+    pop!(ctx.var_id_stack)
     return res
 end
 
 resolve_scopes!(ctx::DesugaringContext, ex) = resolve_scopes!(ScopeResolutionContext(ctx), ex)
 
 function resolve_scopes!(ctx::ScopeResolutionContext, ex)
-    resolve_scope!(ctx, ex, false) do
+    resolve_scope!(ctx, ex, true) do
         resolve_scopes_!(ctx, ex)
     end
+    setattr!(ctx.graph, ex.id, lambda_vars=only(ctx.lambda_vars))
+    SyntaxTree(ctx.graph, ex.id)
 end
 
 function resolve_scopes_!(ctx, ex)
@@ -216,16 +245,20 @@ function resolve_scopes_!(ctx, ex)
         info = ex.lambda_info
         id_map = Dict{String,VarId}()
         for a in info.args
-            id_map[a.name_val] = new_var_id(ctx)
+            id_map[a.name_val] = new_var(ctx, a.name_val, isarg=true)
         end
         push!(ctx.var_id_stack, id_map)
         for a in info.args
             resolve_scopes!(ctx, a)
         end
+        vars = Set{VarId}()
+        setattr!(ctx.graph, ex.id, lambda_vars=vars)
+        push!(ctx.lambda_vars, vars)
         resolve_scopes_!(ctx, ex[1])
+        pop!(ctx.lambda_vars)
         pop!(ctx.var_id_stack)
     elseif k == K"block" && hasattr(ex, :scope_type)
-        resolve_scope!(ctx, ex, true) do
+        resolve_scope!(ctx, ex, false) do
             for e in children(ex)
                 resolve_scopes_!(ctx, e)
             end

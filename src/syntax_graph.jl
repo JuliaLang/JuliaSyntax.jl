@@ -46,6 +46,12 @@ function ensure_attributes!(graph::SyntaxGraph; kws...)
     end
 end
 
+function ensure_attributes(graph::SyntaxGraph; kws...)
+    g = SyntaxGraph(graph.edge_ranges, graph.edges, Dict(pairs(graph.attributes)...))
+    ensure_attributes!(g; kws...)
+    freeze_attrs(g)
+end
+
 function newnode!(graph::SyntaxGraph)
     push!(graph.edge_ranges, 0:-1) # Invalid range start => leaf node
     return length(graph.edge_ranges)
@@ -108,9 +114,6 @@ end
 function _convert_nodes(graph::SyntaxGraph, node::SyntaxNode)
     id = newnode!(graph)
     graph.head[id] = head(node)
-    # FIXME: Decide on API here which isn't terribly inefficient
-    graph.source_pos[id] = node.position
-    # setattr!(graph, id, source_pos=node.position)
     if !isnothing(node.val)
         v = node.val
         if v isa Symbol
@@ -119,13 +122,7 @@ function _convert_nodes(graph::SyntaxGraph, node::SyntaxNode)
             setattr!(graph, id, value=v)
         end
     end
-    # FIXME: remove `isnothing()` check if reverting Unions in SyntaxData
-    let r = node.raw
-        !isnothing(r) && (setattr!(graph, id, green_tree=r))
-    end
-    let s = node.source
-        !isnothing(s) && (setattr!(graph, id, source=s))
-    end
+    setattr!(graph, id, source=SourceRef(node.source, node.position, node.raw))
     if haschildren(node)
         cs = map(children(node)) do n
             _convert_nodes(graph, n)
@@ -188,10 +185,6 @@ end
 Base.firstindex(tree::SyntaxTree) = 1
 Base.lastindex(tree::SyntaxTree) = numchildren(tree)
 
-function filename(tree::SyntaxTree)
-    return filename(tree.source)
-end
-
 function hasattr(tree::SyntaxTree, name::Symbol)
     attr = getattr(tree.graph, name, nothing)
     return !isnothing(attr) && haskey(attr, tree.id)
@@ -202,18 +195,55 @@ function attrnames(tree::SyntaxTree)
     [name for (name, value) in pairs(attrs) if haskey(value, tree.id)]
 end
 
-source_location(::Type{LineNumberNode}, tree::SyntaxTree) = source_location(LineNumberNode, tree.source, tree.source_pos)
-source_location(tree::SyntaxTree) = source_location(tree.source, tree.source_pos)
-first_byte(tree::SyntaxTree) = tree.source_pos
-last_byte(tree::SyntaxTree) = tree.source_pos + span(tree.green_tree) - 1
-
 function head(tree::SyntaxTree)
     tree.head
 end
 
+struct SourceRef
+    file::SourceFile
+    first_byte::Int
+    green_tree::GreenNode
+end
+
+function _srcref(tree::SyntaxTree)
+    sources = tree.graph.source
+    id = tree.id
+    while true
+        s = sources[id]
+        if s isa SourceRef
+            return s
+        else
+            id = s::NodeId
+        end
+    end
+end
+
+function filename(tree::SyntaxTree)
+    return filename(_srcref(tree).file)
+end
+
+function source_location(::Type{LineNumberNode}, tree::SyntaxTree)
+    s = _srcref(tree)
+    source_location(LineNumberNode, s.file, s.first_byte)
+end
+
+function source_location(tree::SyntaxTree)
+    s = _srcref(tree)
+    source_location(s.file, s.first_byte)
+end
+
+function first_byte(tree::SyntaxTree)
+    _srcref(tree).first_byte
+end
+
+function last_byte(tree::SyntaxTree)
+    s = _srcref(tree)
+    s.first_byte + span(s.green_tree) - 1
+end
+
 function SyntaxTree(graph::SyntaxGraph, node::SyntaxNode)
-    ensure_attributes!(graph, head=SyntaxHead, green_tree=GreenNode,
-                       source_pos=Int, source=SourceFile, value=Any, name_val=String)
+    ensure_attributes!(graph, head=SyntaxHead, source=Union{SourceRef,NodeId},
+                       value=Any, name_val=String)
     id = _convert_nodes(graph, node)
     return SyntaxTree(graph, id)
 end
@@ -227,10 +257,11 @@ attrsummary(name, value::Number) = "$name=$value"
 
 function _value_string(ex)
     k = kind(ex)
-    str = k == K"Identifier" ? ex.name_val           :
-          k == K"SSAValue"   ? "#SSA" :
+    str = k == K"Identifier" || is_operator(k) ? ex.name_val :
+          k == K"SSAValue"   ? "ssa"                 :
           k == K"core"       ? "core.$(ex.name_val)" :
           k == K"top"        ? "top.$(ex.name_val)"  :
+          k == K"slot"       ? "slot" :
           repr(get(ex, :value, nothing))
     id = get(ex, :var_id, nothing)
     if !isnothing(id)
@@ -238,6 +269,11 @@ function _value_string(ex)
                         "0"=>"₀", "1"=>"₁", "2"=>"₂", "3"=>"₃", "4"=>"₄",
                         "5"=>"₅", "6"=>"₆", "7"=>"₇", "8"=>"₈", "9"=>"₉")
         str = "$(str).$idstr"
+    end
+    if k == K"slot"
+        # TODO: Ideally shouldn't need to rewrap the id here...
+        srcex = SyntaxTree(ex.graph, ex.source)
+        str = "$(str)/$(srcex.name_val)"
     end
     return str
 end
@@ -262,7 +298,7 @@ function _show_syntax_tree(io, current_filename, node, indent, show_byte_offsets
 
     treestr = string(indent, nodestr)
 
-    std_attrs = Set([:name_val,:value,:source_pos,:head,:source,:green_tree,:var_id])
+    std_attrs = Set([:name_val,:value,:head,:source,:var_id])
     attrstr = join([attrsummary(n, getproperty(node, n)) for n in attrnames(node) if n ∉ std_attrs], ",")
     if !isempty(attrstr)
         treestr = string(rpad(treestr, 40), "│ $attrstr")

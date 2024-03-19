@@ -84,11 +84,17 @@ struct LinearIRContext{GraphType} <: AbstractLoweringContext
     next_var_id::Ref{Int}
     return_type::Union{Nothing,NodeId}
     var_info::Dict{VarId,VarInfo}
+    mod::Module
 end
 
-function LinearIRContext(ctx, return_type)
-    ctx = LinearIRContext(ctx.graph, SyntaxList(ctx.graph), ctx.next_var_id,
-                          return_type, Dict{VarId,VarInfo}())
+function LinearIRContext(ctx::ScopeResolutionContext, mod, return_type)
+    LinearIRContext(ctx.graph, SyntaxList(ctx.graph), ctx.next_var_id,
+                    return_type, ctx.var_info, mod)
+end
+
+function LinearIRContext(ctx::LinearIRContext, return_type)
+    LinearIRContext(ctx.graph, SyntaxList(ctx.graph), ctx.next_var_id,
+                    return_type, ctx.var_info, ctx.mod)
 end
 
 function is_valid_body_ir_argument(ex)
@@ -107,7 +113,7 @@ function is_simple_arg(ex)
 end
 
 function is_single_assign_var(ctx::LinearIRContext, ex)
-    return true # FIXME
+    return false # FIXME
     id = ex.var_id
     # return id in ctx.lambda_args ||
 end
@@ -115,7 +121,7 @@ end
 function is_const_read_arg(ctx, ex)
     k = kind(ex)
     return is_simple_atom(ex) ||
-           single_assign_var(ctx, ex) ||
+           is_single_assign_var(ctx, ex) ||
            k == K"quote" || k == K"inert" || k == K"top" || k == K"core"
 end
 
@@ -202,7 +208,7 @@ end
 function compile(ctx::LinearIRContext, ex, needs_value, in_tail_pos)
     k = kind(ex)
     if k == K"Identifier" || is_literal(k) || k == K"SSAValue" || k == K"quote" || k == K"inert" ||
-            k == K"top" || k == K"core"
+            k == K"top" || k == K"core" || k == K"Value"
         # TODO: other kinds: copyast the_exception $ globalref outerref thismodule cdecl stdcall fastcall thiscall llvmcall
         if in_tail_pos
             emit_return(ctx, ex, ex)
@@ -256,7 +262,35 @@ function compile(ctx::LinearIRContext, ex, needs_value, in_tail_pos)
         compile(ctx, ex[1], true, true)
         nothing
     elseif k == K"method"
-        TODO(ex, "linearize method")
+        # TODO
+        # throw(LoweringError(ex,
+        #     "Global method definition needs to be placed at the top level, or use `eval`"))
+        if numchildren(ex) == 1
+            if in_tail_pos
+                emit_return(ctx, ex, ex)
+            elseif needs_value
+                ex
+            else
+                emit(ctx, ex)
+            end
+        else
+            @chk numchildren(ex) == 3
+            fname = ex[1]
+            sig = compile(ctx, ex[2], true, false)
+            if !is_valid_ir_argument(sig)
+                sig = emit_assign_tmp(ctx, sig)
+            end
+            lam = ex[3]
+            if kind(lam) == K"lambda"
+                lam = compile_lambda(ctx, lam)
+            else
+                # lam = emit_assign_tmp(ctx, compile(ctx, lam, true, false))
+                TODO(lam, "non-lambda method argument??")
+            end
+            emit(ctx, ex, K"method", fname, sig, lam)
+            @assert !needs_value && !in_tail_pos
+            nothing
+        end
     elseif k == K"lambda"
         lam = compile_lambda(ctx, ex)
         if in_tail_pos
@@ -284,15 +318,15 @@ end
 
 # Recursively renumber an expression within linear IR
 # flisp: renumber-stuff
-function _renumber(ctx, ssa_rewrite, arg_rewrite, label_table, ex)
+function _renumber(ctx, ssa_rewrites, slot_rewrites, label_table, ex)
     k = kind(ex)
     if k == K"Identifier"
         id = ex.var_id
-        newarg = isnothing(arg_rewrite) ? nothing : get(arg_rewrite, id, nothing)
-        if !isnothing(newarg)
-            makenode(ctx, ex, newarg[1]; var_id=newarg[2])
+        slot_id = get(slot_rewrites, id, nothing)
+        if !isnothing(slot_id)
+            makenode(ctx, ex, K"slot"; var_id=slot_id)
         else
-            # TODO: Static parameters
+            # TODO: look up any static parameters
             ex
         end
     elseif k == K"outerref" || k == K"meta"
@@ -300,24 +334,27 @@ function _renumber(ctx, ssa_rewrite, arg_rewrite, label_table, ex)
     elseif is_literal(k) || is_quoted(k) || k == K"global"
         ex
     elseif k == K"SSAValue"
-        makenode(ctx, ex, K"SSAValue"; var_id=ssa_rewrite[ex.var_id])
+        makenode(ctx, ex, K"SSAValue"; var_id=ssa_rewrites[ex.var_id])
     elseif k == K"goto" || k == K"enter" || k == K"gotoifnot"
         TODO(ex, "_renumber $k")
     # elseif k == K"lambda"
     #     renumber_lambda(ctx, ex)
     else
         mapchildren(ctx, ex) do e
-            _renumber(ctx, ssa_rewrite, arg_rewrite, label_table, e)
+            _renumber(ctx, ssa_rewrites, slot_rewrites, label_table, e)
         end
         # TODO: foreigncall error check:
         # "ccall function name and library expression cannot reference local variables"
     end
 end
 
+function _ir_to_expr()
+end
+
 # flisp: renumber-lambda, compact-ir
-function renumber_body(ctx, input_code, arg_rewrite)
+function renumber_body(ctx, input_code, slot_rewrites)
     # Step 1: Remove any assignments to SSA variables, record the indices of labels
-    ssa_rewrite = Dict{VarId,VarId}()
+    ssa_rewrites = Dict{VarId,VarId}()
     label_table = Dict{String,Int}()
     code = SyntaxList(ctx)
     for ex in input_code
@@ -327,10 +364,10 @@ function renumber_body(ctx, input_code, arg_rewrite)
             lhs_id = ex[1].var_id
             if kind(ex[2]) == K"SSAValue"
                 # For SSA₁ = SSA₂, record that all uses of SSA₁ should be replaced by SSA₂
-                ssa_rewrite[lhs_id] = ssa_rewrite[ex[2].var_id]
+                ssa_rewrites[lhs_id] = ssa_rewrites[ex[2].var_id]
             else
                 # Otherwise, record which `code` index this SSA value refers to
-                ssa_rewrite[lhs_id] = length(code) + 1
+                ssa_rewrites[lhs_id] = length(code) + 1
                 ex_out = ex[2]
             end
         elseif k == K"label"
@@ -342,31 +379,134 @@ function renumber_body(ctx, input_code, arg_rewrite)
             push!(code, ex_out)
         end
     end
-    # Step 2: Translate any SSA uses and labels into indices in the code table
-    # Translate function arguments into slot indices
+
+    # Step 2:
+    # * Translate any SSA uses and labels into indices in the code table
+    # * Translate locals into slot indices
     for i in 1:length(code)
-        code[i] = _renumber(ctx, ssa_rewrite, arg_rewrite, label_table, code[i])
+        code[i] = _renumber(ctx, ssa_rewrites, slot_rewrites, label_table, code[i])
     end
     code
 end
 
+function to_ir_expr(ex)
+    k = kind(ex)
+    if is_literal(k)
+        ex.value
+    elseif k == K"core"
+        GlobalRef(Core, Symbol(ex.name_val))
+    elseif k == K"top"
+        GlobalRef(Base, Symbol(ex.name_val))
+    elseif k == K"Identifier"
+        # Implicitly refers to name in parent module
+        # TODO: Should we even have plain identifiers at this point or should
+        # they all effectively be resolved into GlobalRef earlier?
+        Symbol(ex.name_val)
+    elseif k == K"slot"
+        Core.SlotNumber(ex.var_id)
+    elseif k == K"SSAValue"
+        Core.SSAValue(ex.var_id)
+    elseif k == K"return"
+        Core.ReturnNode(to_ir_expr(ex[1]))
+    elseif is_quoted(k)
+        TODO(ex, "Convert SyntaxTree to Expr")
+    else
+        # Allowed forms according to https://docs.julialang.org/en/v1/devdocs/ast/
+        #
+        # call invoke static_parameter `=` method struct_type abstract_type
+        # primitive_type global const new splatnew isdefined the_exception
+        # enter leave pop_exception inbounds boundscheck loopinfo copyast meta
+        # foreigncall new_opaque_closure lambda
+        head = k == K"call"   ? :call   :
+               k == K"="      ? :(=)    :
+               k == K"method" ? :method :
+               k == K"global" ? :global :
+               k == K"const"  ? :const  :
+               nothing
+        if isnothing(head)
+            TODO(ex, "Unhandled form")
+        end
+        Expr(head, map(to_ir_expr, children(ex))...)
+    end
+end
+
+# Convert our data structures to CodeInfo
+function to_code_info(input_code, mod, funcname, var_info, slot_rewrites)
+    # Convert code to Expr and record low res locations in table
+    num_stmts = length(input_code)
+    code = Vector{Any}(undef, num_stmts)
+    codelocs = Vector{Int32}(undef, num_stmts)
+    linetable_map = Dict{Tuple{Int,String}, Int32}()
+    linetable = Any[]
+    for i in 1:length(code)
+        code[i] = to_ir_expr(input_code[i])
+        fname = filename(input_code[i])
+        lineno, _ = source_location(input_code[i])
+        loc = (lineno, fname)
+        codelocs[i] = get!(linetable_map, loc) do
+            inlined_at = 0 # FIXME: nonzero for expanded macros
+            full_loc = Core.LineInfoNode(mod, Symbol(funcname), Symbol(fname),
+                                         Int32(lineno), Int32(inlined_at))
+            push!(linetable, full_loc)
+            length(linetable)
+        end
+    end
+
+    # FIXME
+    ssaflags = zeros(UInt32, length(code))
+
+    nslots = length(slot_rewrites)
+    slotnames = Vector{Symbol}(undef, nslots)
+    slot_rename_inds = Dict{String,Int}()
+    slotflags = Vector{UInt8}(undef, nslots)
+    for (id,i) in slot_rewrites
+        info = var_info[id]
+        name = info.name
+        ni = get(slot_rename_inds, name, 0)
+        slot_rename_inds[name] = ni + 1
+        if ni > 0
+            name = "$name@$ni"
+        end
+        slotnames[i] = Symbol(name)
+        slotflags[i] = 0x00  # FIXME!!
+    end
+
+    _CodeInfo(
+        code,
+        codelocs,
+        num_stmts,         # ssavaluetypes (why put num_stmts in here??)
+        ssaflags,
+        nothing,           #  method_for_inference_limit_heuristics
+        linetable,
+        slotnames,
+        slotflags,
+        nothing,           #  slottypes
+        Any,               #  rettype
+        nothing,           #  parent
+        nothing,           #  edges
+        Csize_t(1),        #  min_world
+        typemax(Csize_t),  #  max_world
+        false,             #  inferred
+        false,             #  propagate_inbounds
+        false,             #  has_fcall
+        false,             #  nospecializeinfer
+        0x00,              #  inlining
+        0x00,              #  constprop
+        0x0000,            #  purity
+        0xffff,            #  inlining_cost
+    )
+end
+
 function renumber_lambda(ctx, lambda_info, code)
-    arg_rewrite = Dict{VarId,Tuple{Kind,Int}}()
+    slot_rewrites = Dict{VarId,Tuple{Kind,Int}}()
     # lambda arguments become K"slot"; type parameters become K"static_parameter"
     info = ex.lambda_info
     for (i,arg) in enumerate(info.args)
-        arg_rewrite[arg.var_id] = (K"slot",i)
+        slot_rewrites[arg.var_id] = i
     end
     # TODO: add static_parameter here also
-    renumber_body(ctx, code, arg_rewrite)
+    renumber_body(ctx, code, slot_rewrites)
 end
-
-# Our Julia version-independent proxy for CodeInfo ?
-# struct LambdaIR
-#     args::SyntaxList
-#     code::SyntaxList
-#     var_info # ::Dict{VarId,VarInfo}
-# end
 
 # flisp: compile-body
 function compile_body(ctx, ex)
@@ -375,26 +515,39 @@ function compile_body(ctx, ex)
     # TODO: Filter out any newvar nodes where the arg is definitely initialized
 end
 
-function compile_lambda(ctx, ex)
+function _add_slots!(slot_rewrites, var_info, var_ids)
+    n = length(slot_rewrites) + 1
+    for id in var_ids
+        info = var_info[id]
+        if info.islocal
+            slot_rewrites[id] = n
+            n += 1
+        end
+    end
+    slot_rewrites
+end
+
+function compile_lambda(outer_ctx, ex)
     info = ex.lambda_info
-    lambda_args = Set{VarId}()
-    return_type = nothing
+    return_type = nothing # FIXME
     # TODO: Add assignments for reassigned arguments to body using info.args
     ctx = LinearIRContext(outer_ctx, return_type)
     compile_body(ctx, ex[1])
-    # renumber_lambda(ctx, info
-    # FIXME: Our replacement for CodeInfo
-    #var_info = nothing # FIXME
-    #makenode(ctx, ex, K"Value"; value=LambdaIR(info.args, ctx.code, var_info))
+    slot_rewrites = Dict{VarId,Int}()
+    _add_slots!(slot_rewrites, ctx.var_info, (a.var_id for a in info.args))
+    _add_slots!(slot_rewrites, ctx.var_info, ex.lambda_vars)
+    code = renumber_body(ctx, ctx.code, slot_rewrites)
+    to_code_info(code, ctx.mod, "none", ctx.var_info, slot_rewrites)
 end
 
-function compile_toplevel(outer_ctx, ex)
-    lambda_args = Set{VarId}()
+function compile_toplevel(outer_ctx, mod, ex)
     return_type = nothing
-    ctx = LinearIRContext(outer_ctx, return_type)
+    ctx = LinearIRContext(outer_ctx, mod, return_type)
     compile_body(ctx, ex)
-    arg_rewrite = Dict{VarId,Tuple{Kind,Int}}()
-    renumber_body(ctx, ctx.code, arg_rewrite)
+    slot_rewrites = Dict{VarId,Int}()
+    _add_slots!(slot_rewrites, ctx.var_info, ex.lambda_vars)
+    code = renumber_body(ctx, ctx.code, slot_rewrites)
+    to_code_info(code, mod, "top-level scope", ctx.var_info, slot_rewrites)
     #var_info = nothing # FIXME
     #makenode(ctx, ex, K"Value"; value=LambdaIR(SyntaxList(ctx), ctx.code, var_info))
 end

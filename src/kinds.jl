@@ -963,6 +963,7 @@ const _kind_names =
         "tryfinally"
         "method"
         "slot"
+        "unnecessary"
     "END_LOWERING_KINDS"
 ]
 
