@@ -111,9 +111,21 @@ function Base.getproperty(graph::SyntaxGraph, name::Symbol)
     return getattr(graph, name)
 end
 
+function sethead!(graph, id::NodeId, h::SyntaxHead)
+    graph.kind[id] = kind(h)
+    f = flags(h)
+    if f != 0
+        graph.syntax_flags[id] = f
+    end
+end
+
+function sethead!(graph, id::NodeId, k::Kind)
+    graph.kind[id] = k
+end
+
 function _convert_nodes(graph::SyntaxGraph, node::SyntaxNode)
     id = newnode!(graph)
-    graph.head[id] = head(node)
+    sethead!(graph, id, head(node))
     if !isnothing(node.val)
         v = node.val
         if v isa Symbol
@@ -196,7 +208,15 @@ function attrnames(tree::SyntaxTree)
 end
 
 function head(tree::SyntaxTree)
-    tree.head
+    SyntaxHead(kind(tree), flags(tree))
+end
+
+function kind(tree::SyntaxTree)
+    tree.kind
+end
+
+function flags(tree::SyntaxTree)
+    get(tree, :syntax_flags, 0x0000)
 end
 
 # Reference to bytes within a source file
@@ -237,7 +257,7 @@ first_byte(tree::SyntaxTree) = first_byte(sourceref(tree))
 last_byte(tree::SyntaxTree) = last_byte(sourceref(tree))
 
 function SyntaxTree(graph::SyntaxGraph, node::SyntaxNode)
-    ensure_attributes!(graph, head=SyntaxHead, source=Union{SourceRef,NodeId},
+    ensure_attributes!(graph, kind=Kind, syntax_flags=UInt16, source=Union{SourceRef,NodeId},
                        value=Any, name_val=String)
     id = _convert_nodes(graph, node)
     return SyntaxTree(graph, id)

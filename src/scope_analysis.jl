@@ -188,6 +188,7 @@ end
 
 function resolve_scope!(f::Function, ctx, ex, is_toplevel)
     id_map = Dict{String,VarId}()
+    is_hard_scope = get(ex, :scope_type, :hard) == :hard
     assigned, local_def_vars, used_vars = find_scope_vars(ex, !is_toplevel)
     for name in local_def_vars
         id_map[name] = new_var(ctx, name, islocal=true)
@@ -207,7 +208,7 @@ function resolve_scope!(f::Function, ctx, ex, is_toplevel)
         end
     end
     push!(ctx.var_id_stack, id_map)
-    res = f()
+    res = f(ctx)
     pop!(ctx.var_id_stack)
     return res
 end
@@ -215,8 +216,8 @@ end
 resolve_scopes!(ctx::DesugaringContext, ex) = resolve_scopes!(ScopeResolutionContext(ctx), ex)
 
 function resolve_scopes!(ctx::ScopeResolutionContext, ex)
-    resolve_scope!(ctx, ex, true) do
-        resolve_scopes_!(ctx, ex)
+    resolve_scope!(ctx, ex, true) do cx
+        resolve_scopes_!(cx, ex)
     end
     setattr!(ctx.graph, ex.id, lambda_vars=only(ctx.lambda_vars))
     SyntaxTree(ctx.graph, ex.id)
@@ -258,9 +259,9 @@ function resolve_scopes_!(ctx, ex)
         pop!(ctx.lambda_vars)
         pop!(ctx.var_id_stack)
     elseif k == K"block" && hasattr(ex, :scope_type)
-        resolve_scope!(ctx, ex, false) do
+        resolve_scope!(ctx, ex, false) do cx
             for e in children(ex)
-                resolve_scopes_!(ctx, e)
+                resolve_scopes_!(cx, e)
             end
         end
     else

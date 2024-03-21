@@ -32,7 +32,7 @@ end
 function DesugaringContext()
     graph = SyntaxGraph()
     ensure_attributes!(graph,
-                       head=SyntaxHead, green_tree=GreenNode,
+                       kind=Kind, syntax_flags=UInt16, green_tree=GreenNode,
                        source_pos=Int, source=Union{SourceRef,NodeId},
                        value=Any, name_val=String,
                        scope_type=Symbol, # :hard or :soft
@@ -123,7 +123,8 @@ function _makenode(graph::SyntaxGraph, srcref, head, children; attrs...)
     else
         setchildren!(graph, id, children)
     end
-    setattr!(graph, id; head=head, source=srcref.id, attrs...)
+    setattr!(graph, id; source=srcref.id, attrs...)
+    sethead!(graph, id, head)
     return SyntaxTree(graph, id)
 end
 
