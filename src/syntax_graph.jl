@@ -199,13 +199,25 @@ function head(tree::SyntaxTree)
     tree.head
 end
 
+# Reference to bytes within a source file
 struct SourceRef
     file::SourceFile
     first_byte::Int
+    # TODO: Do we need the green node, or would last_byte suffice?
     green_tree::GreenNode
 end
 
-function _srcref(tree::SyntaxTree)
+first_byte(src::SourceRef) = src.first_byte
+last_byte(src::SourceRef) = src.first_byte + span(src.green_tree) - 1
+filename(src::SourceRef) = filename(src.file)
+source_location(::Type{LineNumberNode}, src::SourceRef) = source_location(LineNumberNode, src.file, src.first_byte)
+source_location(src::SourceRef) = source_location(src.file, src.first_byte)
+
+function Base.show(io::IO, ::MIME"text/plain", src::SourceRef)
+    highlight(io, src.file, first_byte(src):last_byte(src), note="these are the bytes you're looking for 😊", context_lines_inner=20)
+end
+
+function sourceref(tree::SyntaxTree)
     sources = tree.graph.source
     id = tree.id
     while true
@@ -218,28 +230,11 @@ function _srcref(tree::SyntaxTree)
     end
 end
 
-function filename(tree::SyntaxTree)
-    return filename(_srcref(tree).file)
-end
-
-function source_location(::Type{LineNumberNode}, tree::SyntaxTree)
-    s = _srcref(tree)
-    source_location(LineNumberNode, s.file, s.first_byte)
-end
-
-function source_location(tree::SyntaxTree)
-    s = _srcref(tree)
-    source_location(s.file, s.first_byte)
-end
-
-function first_byte(tree::SyntaxTree)
-    _srcref(tree).first_byte
-end
-
-function last_byte(tree::SyntaxTree)
-    s = _srcref(tree)
-    s.first_byte + span(s.green_tree) - 1
-end
+filename(tree::SyntaxTree) = return filename(sourceref(tree))
+source_location(::Type{LineNumberNode}, tree::SyntaxTree) = source_location(LineNumberNode, sourceref(tree))
+source_location(tree::SyntaxTree) = source_location(sourceref(tree))
+first_byte(tree::SyntaxTree) = first_byte(sourceref(tree))
+last_byte(tree::SyntaxTree) = last_byte(sourceref(tree))
 
 function SyntaxTree(graph::SyntaxGraph, node::SyntaxNode)
     ensure_attributes!(graph, head=SyntaxHead, source=Union{SourceRef,NodeId},
