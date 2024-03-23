@@ -313,7 +313,7 @@ function _show_syntax_tree(io, current_filename, node, indent, show_byte_offsets
 
     treestr = string(indent, nodestr)
 
-    std_attrs = Set([:name_val,:value,:head,:source,:var_id])
+    std_attrs = Set([:name_val,:value,:kind,:syntax_flags,:source,:var_id])
     attrstr = join([attrsummary(n, getproperty(node, n)) for n in attrnames(node) if n ∉ std_attrs], ",")
     if !isempty(attrstr)
         treestr = string(rpad(treestr, 40), "│ $attrstr")

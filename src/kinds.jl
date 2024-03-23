@@ -964,6 +964,7 @@ const _kind_names =
         "method"
         "slot"
         "unnecessary"
+        "decl"
     "END_LOWERING_KINDS"
 ]
 

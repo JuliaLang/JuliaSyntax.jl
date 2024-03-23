@@ -60,7 +60,7 @@ function Base.showerror(io::IO, exc::LoweringError)
     # end
     print(io, ":\n")
     d = Diagnostic(first_byte(exc.ex), last_byte(exc.ex), error=exc.msg)
-    sr = _srcref(exc.ex)
+    sr = sourceref(exc.ex)
     show_diagnostic(io, d, sr.file)
 end
 
@@ -205,6 +205,17 @@ function is_placeholder(ex)
     kind(ex) == K"Identifier" && all(==('_'), ex.name_val)
 end
 
+function is_eventually_call(ex::SyntaxTree)
+    k = kind(ex)
+    return k == K"call" || ((k == K"where" || k == K"::") && is_eventually_call(ex[1]))
+end
+
+function is_function_def(ex)
+    k = kind(ex)
+    return k == K"function" || k == K"->" ||
+        (k == K"=" && numchildren(ex) == 2 && is_eventually_call(ex[1]))
+end
+
 function identifier_name(ex)
     kind(ex) == K"var" ? ex[1] : ex
 end
@@ -218,9 +229,21 @@ function decl_var(ex)
     kind(ex) == K"::" ? ex[1] : ex
 end
 
+# given a complex assignment LHS, return the symbol that will ultimately be assigned to
+function assigned_name(ex)
+    k = kind(ex)
+    if (k == K"call" || k == K"curly" || k == K"where") || (k == K"::" && is_eventually_call(ex))
+        assigned_name(ex[1])
+    else
+        ex
+    end
+end
 
 #-------------------------------------------------------------------------------
 # Lowering Pass 1 - basic desugaring
+function expand_assignment(ctx, ex)
+end
+
 function expand_condition(ctx, ex)
     if head(ex) == K"block" || head(ex) == K"||" || head(ex) == K"&&"
         # || and && get special lowering so that they compile directly to jumps
@@ -228,9 +251,6 @@ function expand_condition(ctx, ex)
         error("TODO expand_condition")
     end
     expand_forms(ctx, ex)
-end
-
-function expand_assignment(ctx, ex)
 end
 
 function expand_let(ctx, ex)
@@ -274,6 +294,60 @@ function expand_let(ctx, ex)
 end
 
 function expand_call(ctx, ex)
+    cs = expand_forms(ctx, children(ex))
+    if is_infix_op_call(ex) || is_postfix_op_call(ex)
+        cs[1], cs[2] = cs[2], cs[1]
+    end
+    # TODO: keywords
+    makenode(ctx, ex, K"call", cs...)
+end
+
+# Strip variable type declarations from within a `local` or `global`, returning
+# the stripped expression. Works recursively with complex left hand side
+# assignments containing tuple destructuring. Eg, given
+#   (x::T, (y::U, z))
+#   strip out stmts = (local x) (decl x T) (local x) (decl y U) (local z)
+#   and return (x, (y, z))
+function strip_decls!(ctx, stmts, declkind, ex)
+    k = kind(ex)
+    if k == K"Identifier"
+        push!(stmts, makenode(ctx, ex, declkind, ex))
+        ex
+    elseif k == K"::"
+        @chk numchildren(ex) == 2
+        name = ex[1]
+        @chk kind(name) == K"Identifier"
+        push!(stmts, makenode(ctx, ex, declkind, name))
+        push!(stmts, makenode(ctx, ex, K"decl", name, ex[2]))
+        name
+    elseif k == K"tuple" || k == K"parameters"
+        cs = SyntaxList(ctx)
+        for e in children(ex)
+            push!(cs, strip_decls!(ctx, stmts, declkind, e))
+        end
+        makenode(ctx, ex, k, cs)
+    end
+end
+
+# local x, (y=2), z => local x; local y; y = 2; local z
+function expand_decls(ctx, ex)
+    declkind = kind(ex)
+    stmts = SyntaxList(ctx)
+    for binding in children(ex)
+        kb = kind(binding)
+        if is_function_def(binding)
+            push!(stmts, makenode(ctx, binding, declkind, assigned_name(binding)))
+            push!(stmts, binding)
+        elseif is_prec_assignment(kb)
+            lhs = strip_decls!(ctx, stmts, declkind, binding[1])
+            push!(stmts, makenode(ctx, binding, kb, lhs, binding[2]))
+        elseif is_sym_decl(binding)
+            strip_decls!(ctx, stmts, declkind, binding)
+        else
+            throw(LoweringError("invalid syntax in variable declaration"))
+        end
+    end
+    makenode(ctx, ex, K"block", stmts)
 end
 
 function analyze_function_arg(full_ex)
@@ -429,20 +503,21 @@ end
 
 function expand_forms(ctx::DesugaringContext, ex::SyntaxTree)
     k = kind(ex)
-    # if k == K"call"
-    #     expand_call(ctx, ex)
-    if k == K"function"
+    if k == K"call"
+        expand_call(ctx, ex)
+    elseif k == K"function"
         expand_forms(ctx, expand_function_def(ctx, ex))
     elseif k == K"let"
         return expand_forms(ctx, expand_let(ctx, ex))
+    elseif k == K"local" || k == K"global"
+        if numchildren(ex) == 1 && kind(ex[1]) == K"Identifier"
+            # Don't recurse when already simplified - `local x`, etc
+            ex
+        else
+            expand_forms(ctx, expand_decls(ctx, ex)) # FIXME
+        end
     elseif is_operator(k) && !haschildren(ex)
         return makenode(ctx, ex, K"Identifier", name_val=ex.name_val)
-    elseif k == K"call"
-        cs = expand_forms(ctx, children(ex))
-        if is_infix_op_call(ex) || is_postfix_op_call(ex)
-            cs[1], cs[2] = cs[2], cs[1]
-        end
-        makenode(ctx, ex, K"call", cs...)
     elseif k == K"char" || k == K"var"
         @chk numchildren(ex) == 1
         return ex[1]
