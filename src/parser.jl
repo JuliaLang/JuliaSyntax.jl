@@ -41,6 +41,9 @@ function ParseState(ps::ParseState; range_colon_enabled=nothing,
         where_enabled === nothing ? ps.where_enabled : where_enabled)
 end
 
+using Base.ScopedValues
+const in_parens = ScopedValue(false)
+
 # Functions to change parse state
 
 function normal_context(ps::ParseState)
@@ -56,7 +59,7 @@ end
 function with_space_sensitive(ps::ParseState)
     ParseState(ps,
                space_sensitive=true,
-               whitespace_newline=false)
+               whitespace_newline=in_parens[])
 end
 
 # Convenient wrappers for ParseStream
@@ -3007,70 +3010,72 @@ function parse_paren(ps::ParseState, check_identifiers=true)
                     space_sensitive=false,
                     where_enabled=true,
                     whitespace_newline=true)
-    mark = position(ps)
-    @check peek(ps) == K"("
-    bump(ps, TRIVIA_FLAG) # K"("
-    after_paren_mark = position(ps)
-    k = peek(ps)
-    if k == K")"
-        # ()  ==>  (tuple-p)
-        bump(ps, TRIVIA_FLAG)
-        emit(ps, mark, K"tuple", PARENS_FLAG)
-    elseif is_syntactic_operator(k)
-        # allow :(=) etc in unchecked contexts, eg quotes
-        # :(=)  ==>  (quote-: (parens =))
-        parse_atom(ps, check_identifiers)
-        bump_closing_token(ps, K")")
-        emit(ps, mark, K"parens")
-    elseif !check_identifiers && k == K"::" &&
-            peek(ps, 2, skip_newlines=true) == K")"
-        # allow :(::) as a special case
-        # :(::)  ==>  (quote-: (parens ::))
-        bump(ps)
-        bump(ps, TRIVIA_FLAG, skip_newlines=true)
-        emit(ps, mark, K"parens")
-    else
-        # Deal with all other cases of tuple or block syntax via the generic
-        # parse_brackets
-        initial_semi = peek(ps) == K";"
-        opts = parse_brackets(ps, K")") do had_commas, had_splat, num_semis, num_subexprs
-            is_tuple = had_commas || (had_splat && num_semis >= 1) ||
-                       (initial_semi && (num_semis == 1 || num_subexprs > 0))
-            return (needs_parameters=is_tuple,
-                    is_tuple=is_tuple,
-                    is_block=num_semis > 0)
-        end
-        if opts.is_tuple
-            # Tuple syntax with commas
-            # (x,)        ==>  (tuple-p x)
-            # (x,y)       ==>  (tuple-p x y)
-            # (x=1, y=2)  ==>  (tuple-p (= x 1) (= y 2))
-            #
-            # Named tuple with initial semicolon
-            # (;)         ==>  (tuple-p (parameters))
-            # (; a=1)     ==>  (tuple-p (parameters (= a 1)))
-            #
-            # Extra credit: nested parameters and frankentuples
-            # (x...;)         ==> (tuple-p (... x) (parameters))
-            # (x...; y)       ==> (tuple-p (... x) (parameters y))
-            # (; a=1; b=2)    ==> (tuple-p (parameters (= a 1)) (parameters (= b 2)))
-            # (a; b; c,d)     ==> (tuple-p a (parameters b) (parameters c d))
-            # (a=1, b=2; c=3) ==> (tuple-p (= a 1) (= b 2) (parameters (= c 3)))
+    with(in_parens => true) do
+        mark = position(ps)
+        @check peek(ps) == K"("
+        bump(ps, TRIVIA_FLAG) # K"("
+        after_paren_mark = position(ps)
+        k = peek(ps)
+        if k == K")"
+            # ()  ==>  (tuple-p)
+            bump(ps, TRIVIA_FLAG)
             emit(ps, mark, K"tuple", PARENS_FLAG)
-        elseif opts.is_block
-            # Blocks
-            # (;;)        ==>  (block-p)
-            # (a=1;)      ==>  (block-p (= a 1))
-            # (a;b;;c)    ==>  (block-p a b c)
-            # (a=1; b=2)  ==>  (block-p (= a 1) (= b 2))
-            emit(ps, mark, K"block", PARENS_FLAG)
-        else
-            # Parentheses used for grouping
-            # (a * b)     ==>  (parens (call-i * a b))
-            # (a=1)       ==>  (parens (= a 1))
-            # (x)         ==>  (parens x)
-            # (a...)      ==>  (parens (... a))
+        elseif is_syntactic_operator(k)
+            # allow :(=) etc in unchecked contexts, eg quotes
+            # :(=)  ==>  (quote-: (parens =))
+            parse_atom(ps, check_identifiers)
+            bump_closing_token(ps, K")")
             emit(ps, mark, K"parens")
+        elseif !check_identifiers && k == K"::" &&
+            peek(ps, 2, skip_newlines=true) == K")"
+            # allow :(::) as a special case
+            # :(::)  ==>  (quote-: (parens ::))
+            bump(ps)
+            bump(ps, TRIVIA_FLAG, skip_newlines=true)
+            emit(ps, mark, K"parens")
+        else
+            # Deal with all other cases of tuple or block syntax via the generic
+            # parse_brackets
+            initial_semi = peek(ps) == K";"
+            opts = parse_brackets(ps, K")") do had_commas, had_splat, num_semis, num_subexprs
+                is_tuple = had_commas || (had_splat && num_semis >= 1) ||
+                    (initial_semi && (num_semis == 1 || num_subexprs > 0))
+                return (needs_parameters=is_tuple,
+                        is_tuple=is_tuple,
+                        is_block=num_semis > 0)
+            end
+            if opts.is_tuple
+                # Tuple syntax with commas
+                # (x,)        ==>  (tuple-p x)
+                # (x,y)       ==>  (tuple-p x y)
+                # (x=1, y=2)  ==>  (tuple-p (= x 1) (= y 2))
+                #
+                # Named tuple with initial semicolon
+                # (;)         ==>  (tuple-p (parameters))
+                # (; a=1)     ==>  (tuple-p (parameters (= a 1)))
+                #
+                # Extra credit: nested parameters and frankentuples
+                # (x...;)         ==> (tuple-p (... x) (parameters))
+                # (x...; y)       ==> (tuple-p (... x) (parameters y))
+                # (; a=1; b=2)    ==> (tuple-p (parameters (= a 1)) (parameters (= b 2)))
+                # (a; b; c,d)     ==> (tuple-p a (parameters b) (parameters c d))
+                # (a=1, b=2; c=3) ==> (tuple-p (= a 1) (= b 2) (parameters (= c 3)))
+                emit(ps, mark, K"tuple", PARENS_FLAG)
+            elseif opts.is_block
+                # Blocks
+                # (;;)        ==>  (block-p)
+                # (a=1;)      ==>  (block-p (= a 1))
+                # (a;b;;c)    ==>  (block-p a b c)
+                # (a=1; b=2)  ==>  (block-p (= a 1) (= b 2))
+                emit(ps, mark, K"block", PARENS_FLAG)
+            else
+                # Parentheses used for grouping
+                # (a * b)     ==>  (parens (call-i * a b))
+                # (a=1)       ==>  (parens (= a 1))
+                # (x)         ==>  (parens x)
+                # (a...)      ==>  (parens (... a))
+                emit(ps, mark, K"parens")
+            end
         end
     end
 end
