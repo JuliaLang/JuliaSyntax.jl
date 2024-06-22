@@ -1075,7 +1075,7 @@ function parse_where_chain(ps0::ParseState, mark)
             # x where {T,S}  ==>  (where x (braces T S))
             # Also various nonsensical forms permitted
             # x where {T S}  ==>  (where x (bracescat (row T S)))
-            # x where {y for y in ys}  ==>  (where x (braces (generator y (= y ys))))
+            # x where {y for y in ys}  ==>  (where x (braces (generator y (iteration y ys))))
             m = position(ps)
             bump(ps, TRIVIA_FLAG)
             ckind, cflags = parse_cat(ps, K"}", ps.end_symbol)
@@ -1577,7 +1577,7 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
                 # T[x   y]  ==>  (typed_hcat T x y)
                 # T[x ; y]  ==>  (typed_vcat T x y)
                 # T[a b; c d]  ==>  (typed_vcat T (row a b) (row c d))
-                # T[x for x in xs]  ==>  (typed_comprehension T (generator x (= x xs)))
+                # T[x for x in xs]  ==>  (typed_comprehension T (generator x (iteration x xs)))
                 #v1.8: T[a ; b ;; c ; d]  ==>  (typed_ncat-2 T (nrow-1 a b) (nrow-1 c d))
                 outk = ckind == K"vect"          ? K"ref"                  :
                        ckind == K"hcat"          ? K"typed_hcat"           :
@@ -1797,8 +1797,8 @@ function parse_resword(ps::ParseState)
         bump_closing_token(ps, K"end")
         emit(ps, mark, K"while")
     elseif word == K"for"
-        # for x in xs end  ==>  (for (= x xs) (block))
-        # for x in xs, y in ys \n a \n end ==> (for (cartesian_iterator (= x xs) (= y ys)) (block a))
+        # for x in xs end  ==>  (for (iteration x xs) (block))
+        # for x in xs, y in ys \n a \n end ==> (for (iteration x xs y ys) (block a))
         bump(ps, TRIVIA_FLAG)
         parse_iteration_specs(ps)
         parse_block(ps)
@@ -2620,11 +2620,11 @@ function parse_iteration_spec(ps::ParseState)
     if peek_behind(ps).orig_kind == K"outer"
         if peek_skip_newline_in_gen(ps) in KSet"= in ∈"
             # Not outer keyword
-            # outer = rhs        ==>  (= outer rhs)
-            # outer <| x = rhs   ==>  (= (call-i outer <| x) rhs)
+            # outer = rhs        ==>  (iteration outer rhs)
+            # outer <| x = rhs   ==>  (iteration (call-i outer <| x) rhs)
         else
-            # outer i = rhs      ==>  (= (outer i) rhs)
-            # outer (x,y) = rhs  ==>  (= (outer (tuple-p x y)) rhs)
+            # outer i = rhs      ==>  (iteration (outer i) rhs)
+            # outer (x,y) = rhs  ==>  (iteration (outer (tuple-p x y)) rhs)
             reset_node!(ps, position(ps), kind=K"outer", flags=TRIVIA_FLAG)
             parse_pipe_lt(ps)
             emit(ps, mark, K"outer")
@@ -2640,7 +2640,6 @@ function parse_iteration_spec(ps::ParseState)
         end
         # Or try parse_pipe_lt ???
     end
-    emit(ps, mark, K"=")
 end
 
 # Parse an iteration spec, or a comma separate list of such for for loops and
@@ -2648,9 +2647,7 @@ end
 function parse_iteration_specs(ps::ParseState)
     mark = position(ps)
     n_iters = parse_comma_separated(ps, parse_iteration_spec)
-    if n_iters > 1
-        emit(ps, mark, K"cartesian_iterator")
-    end
+    emit(ps, mark, K"iteration")
 end
 
 # flisp: parse-space-separated-exprs
@@ -2700,19 +2697,19 @@ end
 # Parse generators
 #
 # We represent generators quite differently from `Expr`:
-# * Cartesian products of iterators are grouped within cartesian_iterator
+# * Iteration variables and their iterators are grouped within K"iteration"
 #   nodes, as in the short form of `for` loops.
 # * The `generator` kind is used for both cartesian and flattened generators
 #
-# (x for a in as for b in bs) ==> (parens (generator x (= a as) (= b bs)))
-# (x for a in as, b in bs) ==> (parens (generator x (cartesian_iterator (= a as) (= b bs))))
-# (x for a in as, b in bs if z)  ==> (parens (generator x (filter (cartesian_iterator (= a as) (= b bs)) z)))
+# (x for a in as for b in bs) ==> (parens (generator x (iteration a as) (iteration b bs)))
+# (x for a in as, b in bs) ==> (parens (generator x (iteration a as b bs)))
+# (x for a in as, b in bs if z)  ==> (parens (generator x (filter (iteration a as b bs) z)))
 #
 # flisp: parse-generator
 function parse_generator(ps::ParseState, mark)
     while (t = peek_token(ps); kind(t) == K"for")
         if !preceding_whitespace(t)
-            # ((x)for x in xs)  ==>  (parens (generator (parens x) (error) (= x xs)))
+            # ((x)for x in xs)  ==>  (parens (generator (parens x) (error) (iteration x xs)))
             bump_invisible(ps, K"error", TRIVIA_FLAG,
                            error="Expected space before `for` in generator")
         end
@@ -2720,7 +2717,7 @@ function parse_generator(ps::ParseState, mark)
         iter_mark = position(ps)
         parse_iteration_specs(ps)
         if peek(ps) == K"if"
-            # (x for a in as if z) ==> (parens (generator x (filter (= a as) z)))
+            # (x for a in as if z) ==> (parens (generator x (filter (iteration a as) z)))
             bump(ps, TRIVIA_FLAG)
             parse_cond(ps)
             emit(ps, iter_mark, K"filter")
@@ -2731,7 +2728,7 @@ end
 
 # flisp: parse-comprehension
 function parse_comprehension(ps::ParseState, mark, closer)
-    # [x for a in as] ==> (comprehension (generator x a in as))
+    # [x for a in as] ==> (comprehension (generator x (iteration a as)))
     ps = ParseState(ps, whitespace_newline=true,
                     space_sensitive=false,
                     end_symbol=false)
@@ -2981,8 +2978,8 @@ function parse_cat(ps::ParseState, closer, end_is_symbol)
         # [x       ==>  (vect x (error-t))
         parse_vect(ps, closer)
     elseif k == K"for"
-        # [x for a in as]  ==>  (comprehension (generator x (= a as)))
-        # [x \n\n for a in as]  ==>  (comprehension (generator x (= a as)))
+        # [x for a in as]  ==>  (comprehension (generator x (iteration a as)))
+        # [x \n\n for a in as]  ==>  (comprehension (generator x (iteration a as)))
         parse_comprehension(ps, mark, closer)
     else
         # [x y]  ==>  (hcat x y)
@@ -3138,8 +3135,8 @@ function parse_brackets(after_parse::Function,
                 continue
             elseif k == K"for"
                 # Generator syntax
-                # (x for a in as)       ==>  (parens (generator x (= a as)))
-                # (x \n\n for a in as)  ==>  (parens (generator x (= a as)))
+                # (x for a in as)       ==>  (parens (generator x (iteration a as)))
+                # (x \n\n for a in as)  ==>  (parens (generator x (iteration a as)))
                 parse_generator(ps, mark)
             else
                 # Error - recovery done when consuming closing_kind

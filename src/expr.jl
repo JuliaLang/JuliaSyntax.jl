@@ -193,6 +193,22 @@ function _extract_do_lambda!(args)
     end
 end
 
+function _convert_iteration(wrap_iters::Function, ex)
+    if @isexpr(ex, :iteration)
+        if length(ex.args) == 2
+            wrap_iters(false, Expr(:(=), ex.args[1], ex.args[2]))
+        else
+            blk_args = []
+            for i = 1:2:length(ex.args)
+                push!(blk_args, Expr(:(=), ex.args[i], ex.args[i+1]))
+            end
+            wrap_iters(true, blk_args)
+        end
+    else
+        wrap_iters(false, ex)
+    end
+end
+
 # Convert internal node of the JuliaSyntax parse tree to an Expr
 function _internal_node_to_Expr(source, srcrange, head, childranges, childheads, args)
     k = kind(head)
@@ -296,9 +312,8 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         # Move parameters blocks to args[2]
         _reorder_parameters!(args, 2)
     elseif k == K"for"
-        a1 = args[1]
-        if @isexpr(a1, :cartesian_iterator)
-            args[1] = Expr(:block, a1.args...)
+        args[1] = _convert_iteration(args[1]) do is_multi_iter, iter
+            is_multi_iter ? Expr(:block, iter...) : iter
         end
         # Add extra line number node for the `end` of the block. This may seem
         # useless but it affects code coverage.
@@ -356,10 +371,9 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         gen = args[1]
         for j = length(args):-1:2
             aj = args[j]
-            if @isexpr(aj, :cartesian_iterator)
-                gen = Expr(:generator, gen, aj.args...)
-            else
-                gen = Expr(:generator, gen, aj)
+            gen = _convert_iteration(args[j]) do is_multi_iter, iter
+                is_multi_iter ? Expr(:generator, gen, iter...) :
+                                Expr(:generator, gen, iter)
             end
             if j < length(args)
                 # Additional `for`s flatten the inner generator
@@ -371,10 +385,12 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         @assert length(args) == 2
         iterspec = args[1]
         outargs = Any[args[2]]
-        if @isexpr(iterspec, :cartesian_iterator)
-            append!(outargs, iterspec.args)
-        else
-            push!(outargs, iterspec)
+        _convert_iteration(args[1]) do is_multi_iter, iter
+            if is_multi_iter
+                append!(outargs, iter)
+            else
+                push!(outargs, iter)
+            end
         end
         args = outargs
     elseif k == K"nrow" || k == K"ncat"
