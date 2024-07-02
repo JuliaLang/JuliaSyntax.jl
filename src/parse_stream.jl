@@ -314,7 +314,7 @@ function ParseStream(text::AbstractString, index::Integer=1; version=VERSION)
 end
 
 # IO-based cases
-# TODO: switch ParseStream to use a Memory internally on newer versionsof Julia
+# TODO: switch ParseStream to use a Memory internally on newer versions of Julia
 VERSION < v"1.11.0-DEV.753" && function ParseStream(io::IOBuffer; version=VERSION)
     ParseStream(io.data, io, position(io)+1, version)
 end
