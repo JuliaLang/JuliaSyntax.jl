@@ -24,7 +24,7 @@ struct SourceFile
 end
 
 Base.hash(s::SourceFile, h::UInt) = hash((s.code, s.byte_offset, s.filename, s.first_line, s.line_starts), h)
-function Base.var"=="(a::SourceFile, b::SourceFile)
+function Base.:(==)(a::SourceFile, b::SourceFile)
     a.code == b.code && a.byte_offset == b.byte_offset && a.filename == b.filename &&
     a.first_line == b.first_line && a.line_starts == b.line_starts
 end

@@ -19,7 +19,7 @@ end
 
 # Exclude parent from hash and equality checks. This means that subtrees can compare equal.
 Base.hash(node::TreeNode, h::UInt) = hash((node.children, node.data), h)
-function Base.var"=="(a::TreeNode{T}, b::TreeNode{T}) where T
+function Base.:(==)(a::TreeNode{T}, b::TreeNode{T}) where T
     a.children == b.children && a.data == b.data
 end
 
@@ -51,7 +51,7 @@ struct SyntaxData <: AbstractSyntaxData
 end
 
 Base.hash(data::SyntaxData, h::UInt) = hash((data.source, data.raw, data.position, data.val), h)
-function Base.var"=="(a::SyntaxData, b::SyntaxData)
+function Base.:(==)(a::SyntaxData, b::SyntaxData)
     a.source == b.source && a.raw == b.raw && a.position == b.position && a.val == b.val
 end
 
