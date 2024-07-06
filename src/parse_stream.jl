@@ -314,7 +314,8 @@ function ParseStream(text::AbstractString, index::Integer=1; version=VERSION)
 end
 
 # IO-based cases
-function ParseStream(io::IOBuffer; version=VERSION)
+# TODO: switch ParseStream to use a Memory internally on newer versions of Julia
+VERSION < v"1.11.0-DEV.753" && function ParseStream(io::IOBuffer; version=VERSION)
     ParseStream(io.data, io, position(io)+1, version)
 end
 function ParseStream(io::Base.GenericIOBuffer; version=VERSION)
@@ -475,7 +476,7 @@ end
 end
 
 """
-    peek(stream [, n=1]; skip_newlines=false)
+    peek(stream::ParseStream [, n=1]; skip_newlines=false)
 
 Look ahead in the stream `n` tokens, returning the token kind. Comments and
 non-newline whitespace are skipped automatically. Whitespace containing a
