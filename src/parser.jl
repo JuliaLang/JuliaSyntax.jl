@@ -2157,19 +2157,23 @@ function parse_function_signature(ps::ParseState, is_function::Bool)
             end
         end
     end
-    if peek(ps, skip_newlines=true) == K"end" && !is_anon_func && !parsed_call
-        return false
-    end
     if needs_parse_call
         # Parse function argument list
         # function f(x,y)  end    ==>  (function (call f x y) (block))
         # function f{T}()  end    ==>  (function (call (curly f T)) (block))
         # function A.f()   end    ==>  (function (call (. A f)) (block))
         parse_call_chain(ps, mark)
-        if peek_behind(ps).kind != K"call"
+        sig_kind = peek_behind(ps).kind
+        if sig_kind in KSet"Identifier var $" && peek(ps, skip_newlines=true) == K"end"
+            # function f end ==> (function f)
+            # function $f end ==> (function $f)
+            return false
+        elseif sig_kind == K"macrocall"
+            min_supported_version(v"1.12", ps, mark, "macrocall function sig")
+        elseif sig_kind != K"call"
             # function f body end  ==>  (function (error f) (block body))
             emit(ps, mark, K"error",
-                 error="Invalid signature in $(is_function ? "function" : "macro") definition")
+                error="Invalid signature in $(is_function ? "function" : "macro") definition")
         end
     end
     if is_function && peek(ps) == K"::"
@@ -3494,7 +3498,11 @@ function parse_atom(ps::ParseState, check_identifiers=true)
         # +     ==>  +
         # .+    ==>  (. +)
         # .=    ==>  (. =)
-        bump_dotsplit(ps, emit_dot_node=true)
+        if is_dotted(peek_token(ps))
+            bump_dotsplit(ps, emit_dot_node=true)
+        else
+            bump(ps, remap_kind=K"Identifier")
+        end
         if check_identifiers && !is_valid_identifier(leading_kind)
             # +=   ==>  (error +=)
             # ?    ==>  (error ?)
