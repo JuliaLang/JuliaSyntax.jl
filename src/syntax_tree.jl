@@ -133,7 +133,7 @@ function sourcetext(node::AbstractSyntaxNode)
 end
 
 function Base.range(node::AbstractSyntaxNode)
-    (node.position-1) .+ (1:span(node))
+    node.position:prevind(node.source.code, node.position + span(node))
 end
 
 source_line(node::AbstractSyntaxNode) = source_line(node.source, node.position)

@@ -118,7 +118,7 @@ end
 # TODO: Change view() here to `sourcetext` ?
 function Base.view(source::SourceFile, rng::AbstractUnitRange)
     i = first(rng) - source.byte_offset
-    j = prevind(source.code, last(rng) + 1 - source.byte_offset)
+    j = last(rng) - source.byte_offset
     SubString(source.code, i, j)
 end
 
