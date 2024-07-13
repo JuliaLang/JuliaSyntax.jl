@@ -163,6 +163,16 @@ end
     @test untokenize(tok(str), str)==">>"
 end
 
+@testset "tokenize newlines" begin
+    n = "\n"
+    rn = "\r\n"
+    nl = K"NewlineWs"
+    for i in 0:5
+        j = 5 - i
+        @test toks(n^i * rn^j) == [(n => nl for _ in 1:i)..., (rn => nl for _ in 1:j)...]
+        @test toks(rn^i * n^j) == [(rn => nl for _ in 1:i)..., (n => nl for _ in 1:j)...]
+    end
+end
 
 @testset "test added operators" begin
     @test tok("1+=2",  2).kind == K"+="
