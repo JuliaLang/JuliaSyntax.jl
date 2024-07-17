@@ -169,8 +169,8 @@ end
     nl = K"NewlineWs"
     for i in 0:5
         j = 5 - i
-        @test toks(n^i * rn^j) == [(n => nl for _ in 1:i)..., (rn => nl for _ in 1:j)...]
-        @test toks(rn^i * n^j) == [(rn => nl for _ in 1:i)..., (n => nl for _ in 1:j)...]
+        @test toks(n^i * rn^j) == vcat(fill(n  => nl, i), fill(rn => nl, j))
+        @test toks(rn^i * n^j) == vcat(fill(rn => nl, i), fill(n  => nl, j))
     end
 end
 
