@@ -71,6 +71,10 @@ tests = [
         "a .~ b"      =>  "(dotcall-i a ~ b)"
         "[a ~ b c]"   =>  "(hcat (call-i a ~ b) c)"
         "[a~b]"       =>  "(vect (call-i a ~ b))"
+        "f(x) .= 1"   =>  "(.= (call f x) 1)"
+        "f(x) = 1"    =>  "(function-= (call f x) 1)"
+        "f(x)::T = 1" =>  "(function-= (::-i (call f x) T) 1)"
+        "(f(x)::T) where S = 1" =>  "(function-= (where (parens (::-i (call f x) T)) S) 1)"
     ],
     JuliaSyntax.parse_pair => [
         "a => b"  =>  "(call-i a => b)"
@@ -449,7 +453,7 @@ tests = [
     ],
     JuliaSyntax.parse_resword => [
         # In normal_context
-        "begin f() where T = x end" => "(block (= (where (call f) T) x))"
+        "begin f() where T = x end" => "(block (function-= (where (call f) T) x))"
         # block
         "begin end"         =>  "(block)"
         "begin a ; b end"   =>  "(block a b)"
@@ -955,14 +959,14 @@ tests = [
         "if true \n public A, B \n end"                 => PARSE_ERROR
         "public export=true foo, bar"                   => PARSE_ERROR # but these may be
         "public experimental=true foo, bar"             => PARSE_ERROR # supported soon ;)
-        "public(x::String) = false"                     => "(= (call public (::-i x String)) false)"
+        "public(x::String) = false"                     => "(function-= (call public (::-i x String)) false)"
         "module M; export @a; end"                      => "(module M (block (export @a)))"
         "module M; public @a; end"                      => "(module M (block (public @a)))"
         "module M; export ⤈; end"                       => "(module M (block (export ⤈)))"
         "module M; public ⤈; end"                       => "(module M (block (public ⤈)))"
         "public = 4"                                    => "(= public 4)"
         "public[7] = 5"                                 => "(= (ref public 7) 5)"
-        "public() = 6"                                  => "(= (call public) 6)"
+        "public() = 6"                                  => "(function-= (call public) 6)"
     ]),
     JuliaSyntax.parse_docstring => [
         """ "notdoc" ]        """ => "(string \"notdoc\")"

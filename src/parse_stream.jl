@@ -48,6 +48,8 @@ const COLON_QUOTE = RawFlags(1<<5)
 Set for K"toplevel" which is delimited by parentheses
 """
 const TOPLEVEL_SEMICOLONS_FLAG = RawFlags(1<<5)
+# Set for K"function" in short form `f() = 1`
+const SHORT_FORM_FUNCTION_FLAG = RawFlags(1<<5)
 
 """
 Set for K"struct" when mutable
@@ -143,6 +145,8 @@ function untokenize(head::SyntaxHead; unique=true, include_flag_suff=true)
             has_flags(head, COLON_QUOTE) && (str = str*"-:")
         elseif kind(head) == K"toplevel"
             has_flags(head, TOPLEVEL_SEMICOLONS_FLAG) && (str = str*"-;")
+        elseif kind(head) == K"function"
+            has_flags(head, SHORT_FORM_FUNCTION_FLAG) && (str = str*"-=")
         elseif kind(head) == K"struct"
             has_flags(head, MUTABLE_FLAG) && (str = str*"-mut")
         elseif kind(head) == K"module"

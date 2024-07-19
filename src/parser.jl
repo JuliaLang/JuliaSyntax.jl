@@ -618,12 +618,21 @@ function parse_assignment_with_initial_ex(ps::ParseState, mark, down::T) where {
         parse_assignment(ps, down)
         emit(ps, mark, is_dotted(t) ? K"dotcall" : K"call", INFIX_FLAG)
     else
-        # a += b  ==>  (+= a b)
-        # a .= b  ==>  (.= a b)
+        is_short_form_func = k == K"=" && !is_dotted(t) && was_eventually_call(ps)
         bump(ps, TRIVIA_FLAG)
         bump_trivia(ps)
-        parse_assignment(ps, down)
-        emit(ps, mark, k, flags(t))
+        if is_short_form_func
+            # f() = 1
+            down(ps)
+        else
+            # f() .= 1
+            # a += b  ==>  (+= a b)
+            # a .= b  ==>  (.= a b)
+            parse_assignment(ps, down)
+        end
+        emit(ps, mark,
+             is_short_form_func ? K"function" : k,
+             is_short_form_func ? SHORT_FORM_FUNCTION_FLAG : flags(t))
     end
 end
 

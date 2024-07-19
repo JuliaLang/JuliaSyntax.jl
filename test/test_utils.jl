@@ -96,6 +96,11 @@ function exprs_equal_no_linenum(fl_ex, ex)
     remove_all_linenums!(deepcopy(ex)) == remove_all_linenums!(deepcopy(fl_ex))
 end
 
+function is_eventually_call(ex)
+    return ex isa Expr && (ex.head === :call ||
+        (ex.head === :where || ex.head === :(::)) && is_eventually_call(ex.args[1]))
+end
+
 # Compare Expr from reference parser expression to JuliaSyntax parser, ignoring
 # differences due to bugs in the reference parser.
 function exprs_roughly_equal(fl_ex, ex)
@@ -149,7 +154,7 @@ function exprs_roughly_equal(fl_ex, ex)
         fl_args[1] = Expr(:tuple, Expr(:parameters, kwargs...), posargs...)
     elseif h == :for
         iterspec = args[1]
-        if JuliaSyntax.is_eventually_call(iterspec.args[1]) &&
+        if is_eventually_call(iterspec.args[1]) &&
                 Meta.isexpr(iterspec.args[2], :block)
             blk = iterspec.args[2]
             if length(blk.args) == 2 && blk.args[1] isa LineNumberNode
