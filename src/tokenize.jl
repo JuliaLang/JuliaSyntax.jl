@@ -733,9 +733,10 @@ function lex_whitespace(l::Lexer, c)
         if c == '\n'
             k = K"NewlineWs"
         end
-        pc = peekchar(l)
+        pc, ppc = dpeekchar(l)
         # stop on non whitespace and limit to a single newline in a token
-        if !iswhitespace(pc) || (k == K"NewlineWs" && pc == '\n')
+        if !iswhitespace(pc) ||
+                (k == K"NewlineWs" && (pc == '\n' || (pc == '\r' && ppc == '\n')))
             break
         end
         c = readchar(l)
@@ -747,8 +748,8 @@ function lex_comment(l::Lexer)
     if peekchar(l) != '='
         valid = true
         while true
-            pc = peekchar(l)
-            if pc == '\n' || pc == EOF_CHAR
+            pc, ppc = dpeekchar(l)
+            if pc == '\n' || (pc == '\r' && ppc == '\n') || pc == EOF_CHAR
                 return emit(l, valid ? K"Comment" : K"ErrorInvalidUTF8")
             end
             valid &= isvalid(pc)
