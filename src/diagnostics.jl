@@ -37,10 +37,8 @@ function Diagnostic(first_byte, last_byte; error=nothing, warning=nothing)
     Diagnostic(first_byte, last_byte, level, message)
 end
 
-first_byte(d::Diagnostic) = d.first_byte
-last_byte(d::Diagnostic)  = d.last_byte
+byte_range(d::Diagnostic) = d.first_byte:d.last_byte
 is_error(d::Diagnostic)   = d.level === :error
-Base.range(d::Diagnostic) = first_byte(d):last_byte(d)
 
 # Make relative path into a file URL
 function _file_url(filename)
@@ -73,12 +71,12 @@ function show_diagnostic(io::IO, diagnostic::Diagnostic, source::SourceFile)
                    (:normal, "Info")
     line, col = source_location(source, first_byte(diagnostic))
     linecol = "$line:$col"
-    filename = source.filename
+    fname = filename(source)
     file_href = nothing
-    if !isnothing(filename)
-        locstr = "$filename:$linecol"
-        if !startswith(filename, "REPL[") && get(io, :color, false)
-            url = _file_url(filename)
+    if !isempty(fname)
+        locstr = "$fname:$linecol"
+        if !startswith(fname, "REPL[") && get(io, :color, false)
+            url = _file_url(fname)
             if !isnothing(url)
                 file_href = url*"#$linecol"
             end
@@ -89,7 +87,7 @@ function show_diagnostic(io::IO, diagnostic::Diagnostic, source::SourceFile)
     _printstyled(io, "# $prefix @ ", fgcolor=:light_black)
     _printstyled(io, "$locstr", fgcolor=:light_black, href=file_href)
     print(io, "\n")
-    highlight(io, source, range(diagnostic),
+    highlight(io, source, byte_range(diagnostic),
               note=diagnostic.message, notecolor=color,
               context_lines_before=1, context_lines_after=0)
 end

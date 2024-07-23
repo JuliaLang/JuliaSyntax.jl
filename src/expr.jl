@@ -8,7 +8,7 @@
 Type inference friendly replacement for `Meta.isexpr`.
 
 When using the pattern
-```
+```julia
 if @isexpr(ex, headsym)
     body
 end
@@ -68,6 +68,11 @@ function _strip_parens(ex)
     end
 end
 
+# Get Julia value of leaf node as it would be represented in `Expr` form
+function _expr_leaf_val(node::SyntaxNode)
+    node.val
+end
+
 function _leaf_to_Expr(source, txtbuf, head, srcrange, node)
     k = kind(head)
     if k == K"core_@cmd"
@@ -79,7 +84,7 @@ function _leaf_to_Expr(source, txtbuf, head, srcrange, node)
             Expr(:error) :
             Expr(:error, "$(_token_error_descriptions[k]): `$(source[srcrange])`")
     else
-        val = isnothing(node) ? parse_julia_literal(txtbuf, head, srcrange) : node.val
+        val = isnothing(node) ? parse_julia_literal(txtbuf, head, srcrange) : _expr_leaf_val(node)
         if val isa Union{Int128,UInt128,BigInt}
             # Ignore the values of large integers and convert them back to
             # symbolic/textural form for compatibility with the Expr
@@ -519,19 +524,24 @@ function build_tree(::Type{Expr}, stream::ParseStream;
     only(_fixup_Expr_children!(SyntaxHead(K"None",EMPTY_FLAGS), loc, Any[entry.ex]))
 end
 
-function _to_expr(node::SyntaxNode)
+function _to_expr(node)
+    file = sourcefile(node)
     if !haschildren(node)
-        offset, txtbuf = _unsafe_wrap_substring(sourcetext(node.source))
-        return _leaf_to_Expr(node.source, txtbuf, head(node), range(node) .+ offset, node)
+        offset, txtbuf = _unsafe_wrap_substring(sourcetext(file))
+        return _leaf_to_Expr(file, txtbuf, head(node), byte_range(node) .+ offset, node)
     end
     cs = children(node)
     args = Any[_to_expr(c) for c in cs]
-    _internal_node_to_Expr(node.source, range(node), head(node), range.(cs), head.(cs), args)
+    _internal_node_to_Expr(file, byte_range(node), head(node), byte_range.(cs), head.(cs), args)
+end
+
+function to_expr(node)
+    ex = _to_expr(node)
+    loc = source_location(LineNumberNode, node)
+    only(_fixup_Expr_children!(SyntaxHead(K"None",EMPTY_FLAGS), loc, Any[ex]))
 end
 
 function Base.Expr(node::SyntaxNode)
-    ex = _to_expr(node)
-    loc = source_location(LineNumberNode, node.source, first(range(node)))
-    only(_fixup_Expr_children!(SyntaxHead(K"None",EMPTY_FLAGS), loc, Any[ex]))
+    to_expr(node)
 end
 

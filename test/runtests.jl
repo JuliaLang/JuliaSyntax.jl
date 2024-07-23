@@ -12,6 +12,7 @@ include("test_utils_tests.jl")
 include("fuzz_test.jl")
 
 include("utils.jl")
+include("kinds.jl")
 
 @testset "Tokenize" begin
     include("tokenize.jl")
@@ -37,3 +38,4 @@ if VERSION >= v"1.6"
     include("parse_packages.jl")
 end
 
+include("serialization.jl")

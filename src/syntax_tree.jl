@@ -17,6 +17,12 @@ mutable struct TreeNode{NodeData}   # ? prevent others from using this with Node
     end
 end
 
+# Exclude parent from hash and equality checks. This means that subtrees can compare equal.
+Base.hash(node::TreeNode, h::UInt) = hash((node.children, node.data), h)
+function Base.:(==)(a::TreeNode{T}, b::TreeNode{T}) where T
+    a.children == b.children && a.data == b.data
+end
+
 # Implement "pass-through" semantics for field access: access fields of `data`
 # as if they were part of `TreeNode`
 function Base.getproperty(node::TreeNode, name::Symbol)
@@ -42,6 +48,11 @@ struct SyntaxData <: AbstractSyntaxData
     raw::GreenNode{SyntaxHead}
     position::Int
     val::Any
+end
+
+Base.hash(data::SyntaxData, h::UInt) = hash((data.source, data.raw, data.position, data.val), h)
+function Base.:(==)(a::SyntaxData, b::SyntaxData)
+    a.source == b.source && a.raw == b.raw && a.position == b.position && a.val == b.val
 end
 
 """
@@ -97,6 +108,7 @@ end
 
 haschildren(node::TreeNode) = node.children !== nothing
 children(node::TreeNode) = (c = node.children; return c === nothing ? () : c)
+numchildren(node::TreeNode) = (isnothing(node.children) ? 0 : length(node.children))
 
 
 """
@@ -109,34 +121,14 @@ head(node::AbstractSyntaxNode) = head(node.raw)
 
 span(node::AbstractSyntaxNode) = span(node.raw)
 
-first_byte(node::AbstractSyntaxNode) = node.position
-last_byte(node::AbstractSyntaxNode)  = node.position + span(node) - 1
+byte_range(node::AbstractSyntaxNode) = node.position:(node.position + span(node) - 1)
 
-"""
-    sourcetext(node)
-
-Get the full source text of a node.
-"""
-function sourcetext(node::AbstractSyntaxNode)
-    view(node.source, range(node))
-end
-
-function Base.range(node::AbstractSyntaxNode)
-    (node.position-1) .+ (1:span(node))
-end
-
-source_line(node::AbstractSyntaxNode) = source_line(node.source, node.position)
-source_location(node::AbstractSyntaxNode) = source_location(node.source, node.position)
-
-function interpolate_literal(node::SyntaxNode, val)
-    @assert kind(node) == K"$"
-    SyntaxNode(node.source, node.raw, node.position, node.parent, true, val)
-end
+sourcefile(node::AbstractSyntaxNode) = node.source
 
 function _show_syntax_node(io, current_filename, node::AbstractSyntaxNode,
                            indent, show_byte_offsets)
-    fname = node.source.filename
-    line, col = source_location(node.source, node.position)
+    fname = filename(node)
+    line, col = source_location(node)
     posstr = "$(lpad(line, 4)):$(rpad(col,3))│"
     if show_byte_offsets
         posstr *= "$(lpad(first_byte(node),6)):$(rpad(last_byte(node),6))│"
@@ -182,7 +174,7 @@ end
 
 function Base.show(io::IO, ::MIME"text/plain", node::AbstractSyntaxNode; show_byte_offsets=false)
     println(io, "line:col│$(show_byte_offsets ? " byte_range  │" : "") tree                                   │ file_name")
-    _show_syntax_node(io, Ref{Union{Nothing,String}}(nothing), node, "", show_byte_offsets)
+    _show_syntax_node(io, Ref(""), node, "", show_byte_offsets)
 end
 
 function Base.show(io::IO, ::MIME"text/x.sexpression", node::AbstractSyntaxNode)
@@ -284,10 +276,6 @@ end
 function child_position_span(node::SyntaxNode, path::Int...)
     n = child(node, path...)
     n, n.position, span(n)
-end
-
-function highlight(io::IO, node::SyntaxNode; kws...)
-    highlight(io, node.source, range(node); kws...)
 end
 
 function highlight(io::IO, source::SourceFile, node::GreenNode, path::Int...; kws...)

@@ -163,6 +163,16 @@ end
     @test untokenize(tok(str), str)==">>"
 end
 
+@testset "tokenize newlines" begin
+    n = "\n"
+    rn = "\r\n"
+    nl = K"NewlineWs"
+    for i in 0:5
+        j = 5 - i
+        @test toks(n^i * rn^j) == vcat(fill(n  => nl, i), fill(rn => nl, j))
+        @test toks(rn^i * n^j) == vcat(fill(rn => nl, i), fill(n  => nl, j))
+    end
+end
 
 @testset "test added operators" begin
     @test tok("1+=2",  2).kind == K"+="
@@ -221,6 +231,8 @@ end
     @test toks("#=   #=   =#") == ["#=   #=   =#"=>K"ErrorEofMultiComment"]
     @test toks("#=#==#=#") == ["#=#==#=#"=>K"Comment"]
     @test toks("#=#==#=")  == ["#=#==#="=>K"ErrorEofMultiComment"]
+    # comment terminated by \r\n
+    @test toks("#\r\n") == ["#" => K"Comment", "\r\n" => K"NewlineWs"]
 end
 
 

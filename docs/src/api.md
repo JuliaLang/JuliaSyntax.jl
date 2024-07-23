@@ -30,33 +30,105 @@ JuliaSyntax.untokenize
 JuliaSyntax.Token
 ```
 
-## Source file handling
+## Source code handling
+
+This section describes the generic functions for source text, source location
+computation and formatting functions.
+
+Contiguous syntax objects like nodes in the syntax tree should implement the
+following where possible:
+
+```@docs
+JuliaSyntax.sourcefile
+JuliaSyntax.byte_range
+```
+
+This will provide implementations of the following which include range
+information, line numbers, and fancy highlighting of source ranges:
+
+```@docs
+JuliaSyntax.first_byte
+JuliaSyntax.last_byte
+JuliaSyntax.filename
+JuliaSyntax.source_line
+JuliaSyntax.source_location
+JuliaSyntax.sourcetext
+JuliaSyntax.highlight
+```
+
+`SourceFile`-specific functions:
 
 ```@docs
 JuliaSyntax.SourceFile
-JuliaSyntax.highlight
-JuliaSyntax.sourcetext
-JuliaSyntax.source_line
-JuliaSyntax.source_location
 JuliaSyntax.source_line_range
 ```
 
-## Expression heads/kinds
+## Expression predicates, kinds and flags
+
+Expressions are tagged with a kind - like a type, but represented as an integer
+tag rather than a full Julia type for efficiency. (Very like the tag of a "sum
+type".) `Kind`s are constructed with the `@K_str` macro.
 
 ```@docs
-JuliaSyntax.Kind
-JuliaSyntax.SyntaxHead
 JuliaSyntax.@K_str
-JuliaSyntax.kind
-JuliaSyntax.head
-JuliaSyntax.flags
+JuliaSyntax.Kind
 ```
 
-see also predicates related to `flags`.
+The kind of an expression `ex` in a tree should be accessed with `kind(ex)`
 
-## Syntax tree types
+```@docs
+JuliaSyntax.kind
+```
+
+In addition to the `kind`, a small integer set of "flags" is included to
+further distinguish details of each expresssion, accessed with the `flags`
+function. The kind and flags can be wrapped into a `SyntaxHead` which is
+accessed with the `head` function.
+
+```@docs
+JuliaSyntax.flags
+JuliaSyntax.SyntaxHead
+JuliaSyntax.head
+```
+
+Details about the flags may be extracted using various predicates:
+
+```@docs
+JuliaSyntax.is_trivia
+JuliaSyntax.is_prefix_call
+JuliaSyntax.is_infix_op_call
+JuliaSyntax.is_prefix_op_call
+JuliaSyntax.is_postfix_op_call
+JuliaSyntax.is_dotted
+JuliaSyntax.is_suffixed
+JuliaSyntax.is_decorated
+JuliaSyntax.numeric_flags
+```
+
+Some of the more unusual predicates are accessed merely with `has_flags(x,
+flag_bits)`, where any of the following uppercase constants may be used for
+`flag_bits` after checking that the `kind` is correct.
+
+```@docs
+JuliaSyntax.has_flags
+JuliaSyntax.TRIPLE_STRING_FLAG
+JuliaSyntax.RAW_STRING_FLAG
+JuliaSyntax.PARENS_FLAG
+JuliaSyntax.COLON_QUOTE
+JuliaSyntax.TOPLEVEL_SEMICOLONS_FLAG
+JuliaSyntax.MUTABLE_FLAG
+JuliaSyntax.BARE_MODULE_FLAG
+```
+
+## Syntax trees
+
+Syntax tree types:
 
 ```@docs
 JuliaSyntax.SyntaxNode
 JuliaSyntax.GreenNode
 ```
+
+Functions applicable to syntax trees include everything in the sections on
+heads/kinds as well as the accessor functions in the source code handling
+section.
