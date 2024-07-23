@@ -1009,7 +1009,7 @@ end
 
 @testset "invalid UTF-8 characters" begin
     @test onlytok("\x00") == K"ErrorUnknownCharacter"
-    @test onlytok("′") == K"ErrorIdentifierStart"
+    @test onlytok("₁") == K"ErrorIdentifierStart"
 
     bad_chars = [
         first("\xe2")              # malformed

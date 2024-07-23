@@ -1051,7 +1051,7 @@ function validate_tokens(stream::ParseStream)
         elseif is_error(k) && k != K"error"
             # Emit messages for non-generic token errors
             tokstr = String(txtbuf[tokrange])
-            msg = if k in KSet"ErrorInvisibleChar ErrorUnknownCharacter"
+            msg = if k in KSet"ErrorInvisibleChar ErrorUnknownCharacter ErrorIdentifierStart"
                 "$(_token_error_descriptions[k]) $(repr(tokstr[1]))"
             elseif k in KSet"ErrorInvalidUTF8 ErrorBidiFormatting"
                 "$(_token_error_descriptions[k]) $(repr(tokstr))"
