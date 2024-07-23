@@ -23,7 +23,7 @@ function Base.showerror(io::IO, err::ParseError)
         i = lastindex(err.diagnostics)
         level_info = " some warnings detected:"
     else
-        level_info = " some errors detected:"
+        level_info = ""
     end
     println(io, "ParseError:", level_info)
     show_diagnostics(io, err.diagnostics[1:i], err.source)

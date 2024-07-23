@@ -117,7 +117,7 @@ end
         if JuliaSyntax._has_v1_10_hooks
             @test err.args[1] isa Meta.ParseError
             exc = err.args[1]
-            @test exc.msg == "ParseError: some errors detected:\n# Error @ none:1:2\n\"\n#└ ── unterminated string literal"
+            @test exc.msg == "ParseError\n# Error @ none:1:2\n\"\n#└ ── unterminated string literal"
             @test exc.detail isa JuliaSyntax.ParseError
             @test exc.detail.incomplete_tag === :string
         else
