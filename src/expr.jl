@@ -389,8 +389,7 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
             if has_flags(head, SHORT_FORM_FUNCTION_FLAG)
                 a2 = args[2]
                 if !@isexpr(a2, :block)
-                    body_loc = source_location(LineNumberNode, source, first(childranges[2]))
-                    args[2] = Expr(:block, body_loc, a2)
+                    args[2] = Expr(:block, a2)
                 end
                 headsym = :(=)
             else

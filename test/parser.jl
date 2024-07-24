@@ -74,7 +74,9 @@ tests = [
         "f(x) .= 1"   =>  "(.= (call f x) 1)"
         "f(x) = 1"    =>  "(function-= (call f x) 1)"
         "f(x)::T = 1" =>  "(function-= (::-i (call f x) T) 1)"
+        "f(x) where S where U = 1" =>  "(function-= (where (where (call f x) S) U) 1)"
         "(f(x)::T) where S = 1" =>  "(function-= (where (parens (::-i (call f x) T)) S) 1)"
+        "f(x) = 1 = 2"    =>  "(function-= (call f x) (= 1 2))" # Should be a warning!
     ],
     JuliaSyntax.parse_pair => [
         "a => b"  =>  "(call-i a => b)"
