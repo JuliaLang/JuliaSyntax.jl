@@ -2169,7 +2169,7 @@ function parse_function_signature(ps::ParseState, is_function::Bool)
             # function $f end ==> (function $f)
             return false
         elseif sig_kind == K"macrocall"
-            min_supported_version(v"1.12", ps, mark, "macrocall function sig")
+            min_supported_version(v"1.12", ps, mark, "macro call as function signature")
         elseif sig_kind != K"call"
             # function f body end  ==>  (function (error f) (block body))
             emit(ps, mark, K"error",
