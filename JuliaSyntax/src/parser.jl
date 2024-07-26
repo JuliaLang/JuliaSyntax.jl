@@ -44,9 +44,6 @@ function ParseState(ps::ParseState; range_colon_enabled=nothing,
         in_parens === nothing ? ps.in_parens : in_parens)
 end
 
-using Base.ScopedValues
-const in_parens = ScopedValue(false)
-
 # Functions to change parse state
 
 function normal_context(ps::ParseState)
