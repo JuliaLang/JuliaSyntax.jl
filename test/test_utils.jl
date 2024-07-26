@@ -163,6 +163,11 @@ function exprs_roughly_equal(fl_ex, ex)
                 iterspec.args[2] = blk.args[2]
             end
         end
+    elseif (h == :(=) || h == :kw) && Meta.isexpr(fl_args[1], :(::), 1) &&
+             Meta.isexpr(fl_args[2], :block, 2) && fl_args[2].args[1] isa LineNumberNode
+        # The flisp parser adds an extra block around `w` in the following case
+        # f(::g(z) = w) = 1
+        fl_args[2] = fl_args[2].args[2]
     end
     if length(fl_args) != length(args)
         return false
@@ -174,9 +179,7 @@ function exprs_roughly_equal(fl_ex, ex)
         fl_args[1] = Expr(:macrocall, map(kw_to_eq, args[1].args)...)
     end
     for i = 1:length(args)
-        flarg = fl_args[i]
-        arg = args[i]
-        if !exprs_roughly_equal(flarg, arg)
+        if !exprs_roughly_equal(fl_args[i], args[i])
             return false
         end
     end
@@ -312,7 +315,7 @@ between flisp and JuliaSyntax parsers and return the source text of those
 subtrees.
 """
 function reduce_tree(text::AbstractString; kws...)
-    tree = parseall(SyntaxNode, text)
+    tree = parseall(SyntaxNode, text, ignore_warnings=true)
     sourcetext.(reduce_tree(tree; kws...))
 end
 

@@ -72,6 +72,7 @@ tests = [
         "[a ~ b c]"   =>  "(hcat (call-i a ~ b) c)"
         "[a~b]"       =>  "(vect (call-i a ~ b))"
         "f(x) .= 1"   =>  "(.= (call f x) 1)"
+        "::g() = 1"   =>  "(= (::-pre (call g)) 1)"
         "f(x) = 1"    =>  "(function-= (call f x) 1)"
         "f(x)::T = 1" =>  "(function-= (::-i (call f x) T) 1)"
         "f(x) where S where U = 1" =>  "(function-= (where (where (call f x) S) U) 1)"

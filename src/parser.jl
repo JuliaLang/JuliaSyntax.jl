@@ -133,6 +133,9 @@ function first_child_position(ps::ParseState, pos::ParseStreamPosition)
     first_child_position(ps.stream, pos)
 end
 
+function last_child_position(ps::ParseState, pos::ParseStreamPosition)
+    last_child_position(ps.stream, pos)
+end
 #-------------------------------------------------------------------------------
 # Parser Utils
 
@@ -325,6 +328,12 @@ function was_eventually_call(ps::ParseState)
             return true
         elseif b.kind == K"where" || b.kind == K"parens" ||
                 (b.kind == K"::" && has_flags(b.flags, INFIX_FLAG))
+            if b.kind == K"::"
+                p_last = last_child_position(ps, p)
+                if p == p_last
+                    return false
+                end
+            end
             p = first_child_position(ps, p)
         else
             return false
