@@ -48,7 +48,10 @@ const COLON_QUOTE = RawFlags(1<<5)
 Set for K"toplevel" which is delimited by parentheses
 """
 const TOPLEVEL_SEMICOLONS_FLAG = RawFlags(1<<5)
-# Set for K"function" in short form `f() = 1`
+
+"""
+Set for K"function" in short form definitions such as `f() = 1`
+"""
 const SHORT_FORM_FUNCTION_FLAG = RawFlags(1<<5)
 
 """
