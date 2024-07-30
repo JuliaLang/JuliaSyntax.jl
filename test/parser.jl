@@ -581,6 +581,7 @@ tests = [
         "function f end"      =>  "(function f)"
         "function f \n\n end" =>  "(function f)"
         "function \$f end"    =>  "(function (\$ f))"
+        "function var\".\" end" => "(function (var .))"
         "macro f end"         =>  "(macro f)"
         # Function argument list
         "function f(x,y) end"    =>  "(function (call f x y) (block))"
