@@ -1078,6 +1078,7 @@ register_kinds!(JuliaSyntax, 0, [
         "inert"          # QuoteNode; not quasiquote
         "juxtapose"      # Numeric juxtaposition like 2x
         "string"         # A string interior node (possibly containing interpolations)
+        "format"         # String formatting specification
         "cmdstring"      # A cmd string node (containing delimiters plus string)
         "char"           # A char string node (containing delims + char data)
         "macrocall"
