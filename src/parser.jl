@@ -2110,14 +2110,15 @@ function parse_function_signature(ps::ParseState, is_function::Bool)
             # * The whole function declaration, in parens
             bump(ps, TRIVIA_FLAG)
             is_empty_tuple = peek(ps, skip_newlines=true) == K")"
-            opts = parse_brackets(ps, K")") do _, _, _, _
+            opts = parse_brackets(ps, K")") do had_commas, had_splat, num_semis, num_subexprs
                 _parsed_call = was_eventually_call(ps)
                 _needs_parse_call = peek(ps, 2) ∈ KSet"( ."
-                _is_anon_func = !_needs_parse_call && !_parsed_call
+                _is_anon_func = (!_needs_parse_call && !_parsed_call) || had_commas
                 return (needs_parameters = _is_anon_func,
                         is_anon_func     = _is_anon_func,
                         parsed_call      = _parsed_call,
-                        needs_parse_call = _needs_parse_call)
+                        needs_parse_call = _needs_parse_call,
+                        maybe_grouping_parens = !had_commas && !had_splat && num_semis == 0 && num_subexprs == 1)
             end
             is_anon_func = opts.is_anon_func
             parsed_call = opts.parsed_call
@@ -2128,7 +2129,14 @@ function parse_function_signature(ps::ParseState, is_function::Bool)
                 # function (x,y) end    ==>  (function (tuple-p x y) (block))
                 # function (x=1) end    ==>  (function (tuple-p (= x 1)) (block))
                 # function (;x=1) end   ==>  (function (tuple-p (parameters (= x 1))) (block))
+                # function (f(x),) end  ==>  (function (tuple-p (call f x)) (block))
+                ambiguous_parens = opts.maybe_grouping_parens &&
+                                   peek_behind(ps).kind in KSet"macrocall $"
                 emit(ps, mark, K"tuple", PARENS_FLAG)
+                if ambiguous_parens
+                    # Got something like `(@f(x))`. Is it anon `(@f(x),)` or named sig `@f(x)` ??
+                    emit(ps, mark, K"error", error="Ambiguous signature. Add a trailing comma if this is a 1-argument anonymous function; remove parentheses if this is a macro call acting as function signature.")
+                end
             elseif is_empty_tuple
                 # Weird case which is consistent with parse_paren but will be
                 # rejected in lowering
