@@ -1,5 +1,7 @@
 module JuliaSyntax
 
+using UnicodeNext
+
 # Conservative list of exports - only export the most common/useful things
 # here.
 

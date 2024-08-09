@@ -329,47 +329,26 @@ function unescape_julia_string(io::IO, txtbuf::Vector{UInt8},
 end
 
 #-------------------------------------------------------------------------------
-# Unicode normalization. As of Julia 1.8, this is part of Base and the Unicode
-# stdlib under the name `Unicode.julia_chartransform`. See
-# https://github.com/JuliaLang/julia/pull/42561
-#
-# To allow use on older Julia versions and to workaround the bug
-# https://github.com/JuliaLang/julia/issues/45716
-# we reproduce a specialized version of that logic here.
+# Unicode normalization.
 
-# static wrapper around user callback function
-function utf8proc_custom_func(codepoint::UInt32, ::Ptr{Cvoid})::UInt32
-    (codepoint == 0x025B ? 0x03B5 :  # 'ɛ' => 'ε'
-    codepoint == 0x00B5 ? 0x03BC :   # 'µ' => 'μ'
-    codepoint == 0x00B7 ? 0x22C5 :   # '·' => '⋅'
-    codepoint == 0x0387 ? 0x22C5 :   # '·' => '⋅'
-    codepoint == 0x2212 ? 0x002D :   # '−' (\minus) => '-'
-    codepoint == 0x210F ? 0x0127 :   # 'ℏ' (\hslash) => 'ħ' \hbar
-    codepoint)
+function normalize_identifier(c::Char)
+    if c <= '~'
+        return c # ASCII common case
+    end
+    return c == '\u025B' ? '\u03B5' : # 'ɛ' => 'ε'
+           c == '\u00B5' ? '\u03BC' : # 'µ' => 'μ'
+           c == '\u00B7' ? '\u22C5' : # '·' => '⋅'
+           c == '\u0387' ? '\u22C5' : # '·' => '⋅'
+           c == '\u2212' ? '\u002D' : # '−' (\minus) => '-'
+           c == '\u210F' ? '\u0127' : # 'ℏ' (\hslash) => 'ħ' \hbar
+           c
 end
 
-function utf8proc_decompose(str, options, buffer, nwords)
-    ret = ccall(:utf8proc_decompose_custom, Int, (Ptr{UInt8}, Int, Ptr{UInt8}, Int, Cint, Ptr{Cvoid}, Ptr{Cvoid}),
-                str, sizeof(str), buffer, nwords, options,
-                @cfunction(utf8proc_custom_func, UInt32, (UInt32, Ptr{Cvoid})), C_NULL)
-    ret < 0 && Base.Unicode.utf8proc_error(ret)
-    return ret
+function normalize_identifier(str::AbstractString)
+    isascii(str) ? str :
+        UnicodeNext.normalize(str, stable=true, compose=true,
+                              chartransform=normalize_identifier)
 end
-
-function utf8proc_map(str::Union{String,SubString{String}}, options::Integer)
-    nwords = utf8proc_decompose(str, options, C_NULL, 0)
-    buffer = Base.StringVector(nwords*4)
-    nwords = utf8proc_decompose(str, options, buffer, nwords)
-    nbytes = ccall(:utf8proc_reencode, Int, (Ptr{UInt8}, Int, Cint), buffer, nwords, options)
-    nbytes < 0 && Base.Unicode.utf8proc_error(nbytes)
-    return String(resize!(buffer, nbytes))
-end
-
-function normalize_identifier(str)
-    flags = Base.Unicode.UTF8PROC_STABLE | Base.Unicode.UTF8PROC_COMPOSE
-    return isascii(str) ? str : utf8proc_map(str, flags)
-end
-
 
 #-------------------------------------------------------------------------------
 function parse_julia_literal(txtbuf::Vector{UInt8}, head::SyntaxHead, srcrange)
@@ -447,4 +426,3 @@ function parse_julia_literal(txtbuf::Vector{UInt8}, head::SyntaxHead, srcrange)
         ErrorVal()
     end
 end
-

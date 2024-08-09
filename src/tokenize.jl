@@ -2,27 +2,128 @@ module Tokenize
 
 export tokenize, untokenize
 
-using ..JuliaSyntax: JuliaSyntax, Kind, @K_str, @KSet_str
+using ..JuliaSyntax: JuliaSyntax, Kind, @K_str, @KSet_str, @u8_str
 
 import ..JuliaSyntax: kind,
     is_literal, is_contextual_keyword, is_word_operator
 
 #-------------------------------------------------------------------------------
 # Character-based predicates for tokenization
-import Base.Unicode
 
 const EOF_CHAR = typemax(Char)
 
-function is_identifier_char(c::Char)
-    c == EOF_CHAR && return false
-    isvalid(c) || return false
-    return Base.is_id_char(c)
+# Julia identifier parsing predicates
+
+using UnicodeNext
+
+import UnicodeNext: CATEGORY_CS, CATEGORY_LL, CATEGORY_LM, CATEGORY_LO,
+    CATEGORY_LT, CATEGORY_LU, CATEGORY_MC, CATEGORY_ME, CATEGORY_MN,
+    CATEGORY_ND, CATEGORY_NL, CATEGORY_NO, CATEGORY_PC, CATEGORY_PD,
+    CATEGORY_PO, CATEGORY_SC, CATEGORY_SK, CATEGORY_SO, CATEGORY_ZS
+
+# port of is_wc_cat_id_start from julia/src/flisp/julia_extensions.c
+function _is_identifier_start_char(c::UInt32, cat::Integer)
+    return (cat == CATEGORY_LU || cat == CATEGORY_LL ||
+            cat == CATEGORY_LT || cat == CATEGORY_LM ||
+            cat == CATEGORY_LO || cat == CATEGORY_NL ||
+            cat == CATEGORY_SC ||  # allow currency symbols
+            # other symbols, but not arrows or replacement characters
+            (cat == CATEGORY_SO && !(c >= 0x2190 && c <= 0x21FF) &&
+             c != 0xfffc && c != 0xfffd &&
+             c != 0x233f &&  # notslash
+             c != 0x00a6) || # broken bar
+
+            # math symbol (category Sm) whitelist
+            (c >= 0x2140 && c <= 0x2a1c &&
+             ((c >= 0x2140 && c <= 0x2144) || # ⅀, ⅁, ⅂, ⅃, ⅄
+              c == 0x223f || c == 0x22be || c == 0x22bf || # ∿, ⊾, ⊿
+              c == 0x22a4 || c == 0x22a5 ||   # ⊤ ⊥
+
+              (c >= 0x2200 && c <= 0x2233 &&
+               (c == 0x2202 || c == 0x2205 || c == 0x2206 || # ∂, ∅, ∆
+                c == 0x2207 || c == 0x220e || c == 0x220f || # ∇, ∎, ∏
+                c == 0x2200 || c == 0x2203 || c == 0x2204 || # ∀, ∃, ∄
+                c == 0x2210 || c == 0x2211 || # ∐, ∑
+                c == 0x221e || c == 0x221f || # ∞, ∟
+                c >= 0x222b)) || # ∫, ∬, ∭, ∮, ∯, ∰, ∱, ∲, ∳
+
+              (c >= 0x22c0 && c <= 0x22c3) ||  # N-ary big ops: ⋀, ⋁, ⋂, ⋃
+              (c >= 0x25F8 && c <= 0x25ff) ||  # ◸, ◹, ◺, ◻, ◼, ◽, ◾, ◿
+
+              (c >= 0x266f &&
+               (c == 0x266f || c == 0x27d8 || c == 0x27d9 || # ♯, ⟘, ⟙
+                (c >= 0x27c0 && c <= 0x27c1) ||  # ⟀, ⟁
+                (c >= 0x29b0 && c <= 0x29b4) ||  # ⦰, ⦱, ⦲, ⦳, ⦴
+                (c >= 0x2a00 && c <= 0x2a06) ||  # ⨀, ⨁, ⨂, ⨃, ⨄, ⨅, ⨆
+                (c >= 0x2a09 && c <= 0x2a16) ||  # ⨉, ⨊, ⨋, ⨌, ⨍, ⨎, ⨏, ⨐, ⨑, ⨒, ⨓, ⨔, ⨕, ⨖
+                c == 0x2a1b || c == 0x2a1c)))) || # ⨛, ⨜
+
+            (c >= 0x1d6c1 && # variants of \nabla and \partial
+             (c == 0x1d6c1 || c == 0x1d6db ||
+              c == 0x1d6fb || c == 0x1d715 ||
+              c == 0x1d735 || c == 0x1d74f ||
+              c == 0x1d76f || c == 0x1d789 ||
+              c == 0x1d7a9 || c == 0x1d7c3)) ||
+
+            # super- and subscript +-=()
+            (c >= 0x207a && c <= 0x207e) ||
+            (c >= 0x208a && c <= 0x208e) ||
+
+            # angle symbols
+            (c >= 0x2220 && c <= 0x2222) || # ∠, ∡, ∢
+            (c >= 0x299b && c <= 0x29af) || # ⦛, ⦜, ⦝, ⦞, ⦟, ⦠, ⦡, ⦢, ⦣, ⦤, ⦥, ⦦, ⦧, ⦨, ⦩, ⦪, ⦫, ⦬, ⦭, ⦮, ⦯
+
+            # Other_ID_Start
+            c == 0x2118 || c == 0x212E || # ℘, ℮
+            (c >= 0x309B && c <= 0x309C) || # katakana-hiragana sound marks
+
+            # bold-digits and double-struck digits
+            (c >= 0x1D7CE && c <= 0x1D7E1)) # 𝟎 through 𝟗 (inclusive), 𝟘 through 𝟡 (inclusive)
 end
 
+# utility function to return the ASCII byte if isascii(c),
+# and otherwise (for non-ASCII or invalid chars) return 0xff,
+# based on the isascii source code.
+@inline function _ascii_byte(c::Char)
+    x = bswap(reinterpret(UInt32, c))
+    return x < 0x80 ? x % UInt8 : 0xff
+end
+
+# from jl_id_start_char in julia/src/flisp/julia_extensions.c
 function is_identifier_start_char(c::Char)
-    c == EOF_CHAR && return false
-    isvalid(c) || return false
-    return Base.is_id_start_char(c)
+    a = _ascii_byte(c)
+    if a != 0xff # ascii fast path
+        return (a >= u8"A" && a <= u8"Z") || (a >= u8"a" && a <= u8"z") || a == u8"_"
+    end
+    if c < Char(0xA1) || !isvalid(c)
+        return false
+    end
+    x = UInt32(c)
+    return _is_identifier_start_char(x, UnicodeNext.category_code(x))
+end
+
+# from jl_id_char in julia/src/flisp/julia_extensions.c
+function is_identifier_char(c::Char)
+    a = _ascii_byte(c)
+    if a != 0xff # ascii fast path
+        return (a >= u8"A" && a <= u8"Z") || (a >= u8"a" && a <= u8"z") ||
+                a == u8"_" || (a >= u8"0" && a <= u8"9") || a == u8"!"
+    end
+    if c < Char(0xA1) || !isvalid(c)
+        return false
+    end
+    x = UInt32(c)
+    cat = UnicodeNext.category_code(x)
+    _is_identifier_start_char(x, cat) && return true
+    if (cat == CATEGORY_MN || cat == CATEGORY_MC ||
+        cat == CATEGORY_ND || cat == CATEGORY_PC ||
+        cat == CATEGORY_SK || cat == CATEGORY_ME ||
+        cat == CATEGORY_NO ||
+        # primes (single, double, triple, their reverses, and quadruple)
+        (x >= 0x2032 && x <= 0x2037) || (x == 0x2057))
+        return true
+    end
+    return false
 end
 
 function is_invisible_char(c::Char)
@@ -44,15 +145,15 @@ end
 # Chars that we will never allow to be part of a valid non-operator identifier
 function is_never_id_char(ch::Char)
     isvalid(ch) || return true
-    cat = Unicode.category_code(ch)
+    cat = UnicodeNext.category_code(ch)
     c = UInt32(ch)
     return (
         # spaces and control characters:
-        (cat >= Unicode.UTF8PROC_CATEGORY_ZS && cat <= Unicode.UTF8PROC_CATEGORY_CS) ||
+        (cat >= CATEGORY_ZS && cat <= CATEGORY_CS) ||
 
         # ASCII and Latin1 non-connector punctuation
         (c < 0xff &&
-         cat >= Unicode.UTF8PROC_CATEGORY_PD && cat <= Unicode.UTF8PROC_CATEGORY_PO) ||
+         cat >= CATEGORY_PD && cat <= CATEGORY_PO) ||
 
         c == UInt32('`') ||
 
@@ -137,10 +238,10 @@ end
     if (u < 0xa1 || u > 0x10ffff)
         return false
     end
-    cat = Base.Unicode.category_code(u)
-    if (cat == Base.Unicode.UTF8PROC_CATEGORY_MN ||
-        cat == Base.Unicode.UTF8PROC_CATEGORY_MC ||
-        cat == Base.Unicode.UTF8PROC_CATEGORY_ME)
+    cat = UnicodeNext.category_code(u)
+    if (cat == CATEGORY_MN ||
+        cat == CATEGORY_MC ||
+        cat == CATEGORY_ME)
         return true
     end
     # Additional allowed cases
@@ -226,7 +327,7 @@ end
 @inline ishex(c::Char) = isdigit(c) || ('a' <= c <= 'f') || ('A' <= c <= 'F')
 @inline isbinary(c::Char) = c == '0' || c == '1'
 @inline isoctal(c::Char) =  '0' ≤ c ≤ '7'
-@inline iswhitespace(c::Char) = (isvalid(c) && Base.isspace(c)) || c === '\ufeff'
+@inline iswhitespace(c::Char) = (isvalid(c) && UnicodeNext.isspace(c)) || c === '\ufeff'
 
 struct StringState
     triplestr::Bool
@@ -1291,25 +1392,27 @@ function lex_identifier(l::Lexer, c)
     h = simple_hash(c, UInt64(0))
     n = 1
     ascii = isascii(c)
-    graphemestate = Ref(Int32(ascii)) # all ASCII id chars are UTF8PROC_BOUNDCLASS_OTHER
-    graphemestate_peek = Ref(zero(Int32))
+    graphemestate = UnicodeNext.GraphemeState(c)
     while true
         pc, ppc = dpeekchar(l)
-        ascii = ascii && isascii(pc)
+        pc_byte = _ascii_byte(pc)
+        ascii = ascii && pc_byte != 0xff
         if ascii # fast path
-            pc_byte = pc % UInt8
             @inbounds if (pc_byte == UInt8('!') && ppc == '=') || !ascii_is_identifier_char[pc_byte+1]
                 break
             end
-        elseif Unicode.isgraphemebreak!(graphemestate, c, pc)
-            if (pc == '!' && ppc == '=') || !is_identifier_char(pc)
-                break
-            end
-        elseif pc in ('\u200c','\u200d') # ZWNJ/ZWJ control characters
-            # ZWJ/ZWNJ only within grapheme sequences, not at end
-            graphemestate_peek[] = graphemestate[]
-            if Unicode.isgraphemebreak!(graphemestate_peek, pc, ppc)
-                break
+        else
+            graphemestate, isbreak = UnicodeNext.isgraphemebreak(graphemestate, pc)
+            if isbreak
+                if ((pc == '!' && ppc == '=') || !is_identifier_char(pc))
+                    break
+                end
+            elseif pc in ('\u200c','\u200d') # ZWNJ/ZWJ control characters
+                # ZWJ/ZWNJ only within grapheme sequences, not at end
+                _, isbreak_peek = UnicodeNext.isgraphemebreak(graphemestate, ppc)
+                if isbreak_peek
+                    break
+                end
             end
         end
         c = readchar(l)
