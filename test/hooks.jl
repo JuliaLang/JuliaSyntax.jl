@@ -29,7 +29,7 @@ end
             # Issue #81
             f() = nothing
             """
-        @test JuliaSyntax.core_parser_hook(stmtstr, "somefile", 1, 0, :statement)[2] ∈ 19:21
+        @test JuliaSyntax.core_parser_hook(stmtstr, "somefile", 1, 0, :statement)[2] == 19
     end
 
     @testset "filename and lineno" begin
