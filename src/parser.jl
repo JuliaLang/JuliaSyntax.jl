@@ -1681,7 +1681,7 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
             else
                 # Field/property syntax
                 # f.x.y ==> (. (. f x) y)
-                parse_atom(ps, false)
+                parse_atom(ps, false, K"Symbol")
                 macro_name_position = position(ps)
                 maybe_strmac_1 = true
                 emit(ps, mark, K".")
@@ -3436,7 +3436,7 @@ end
 # the syntactic operators or closing tokens.
 #
 # flisp: parse-atom
-function parse_atom(ps::ParseState, check_identifiers=true)
+function parse_atom(ps::ParseState, check_identifiers=true, identifier_kind=K"Identifier")
     bump_trivia(ps)
     mark = position(ps)
     leading_kind = peek(ps)
@@ -3486,7 +3486,7 @@ function parse_atom(ps::ParseState, check_identifiers=true)
     elseif leading_kind == K"Char"
         # FIXME: This is a tokenization error and should be preceeded with
         # K"'". However this workaround is better than emitting a bare Char.
-        bump(ps, remap_kind=K"Identifier")
+        bump(ps, remap_kind=identifier_kind)
     elseif leading_kind == K":"
         # symbol/expression quote
         # :foo  ==>  (quote-: foo)
@@ -3520,10 +3520,10 @@ function parse_atom(ps::ParseState, check_identifiers=true)
     elseif leading_kind == K"Identifier"
         # xx  ==>  xx
         # x₁  ==>  x₁
-        bump(ps)
+        bump(ps, remap_kind=identifier_kind)
     elseif is_word_operator(leading_kind)
         # where=1 ==> (= where 1)
-        bump(ps, remap_kind=K"Identifier")
+        bump(ps, remap_kind=identifier_kind)
     elseif is_operator(leading_kind)
         # +     ==>  +
         # .+    ==>  (. +)
@@ -3531,7 +3531,7 @@ function parse_atom(ps::ParseState, check_identifiers=true)
         if is_dotted(peek_token(ps))
             bump_dotsplit(ps, emit_dot_node=true)
         else
-            bump(ps, remap_kind=K"Identifier")
+            bump(ps, remap_kind=identifier_kind)
         end
         if check_identifiers && !is_valid_identifier(leading_kind)
             # +=   ==>  (error +=)
@@ -3559,9 +3559,9 @@ function parse_atom(ps::ParseState, check_identifiers=true)
             bump(ps, TRIVIA_FLAG)
             bump(ps, TRIVIA_FLAG)
             if peek(ps) == K"String"
-                bump(ps, RAW_STRING_FLAG; remap_kind=K"Identifier")
+                bump(ps, RAW_STRING_FLAG; remap_kind=identifier_kind)
             else
-                bump_invisible(ps, K"Identifier", RAW_STRING_FLAG)
+                bump_invisible(ps, identifier_kind, RAW_STRING_FLAG)
             end
             if peek(ps) == K"\""
                 bump(ps, TRIVIA_FLAG)
@@ -3595,7 +3595,7 @@ function parse_atom(ps::ParseState, check_identifiers=true)
             # Remap keywords to identifiers.
             # :end  ==>  (quote-: end)
             # :<:   ==> (quote-: <:)
-            bump(ps, remap_kind=K"Identifier")
+            bump(ps, remap_kind=identifier_kind)
         end
     elseif leading_kind == K"(" # parens or tuple
         parse_paren(ps, check_identifiers)

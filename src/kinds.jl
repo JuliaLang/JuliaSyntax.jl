@@ -266,6 +266,7 @@ register_kinds!(JuliaSyntax, 0, [
         "String"
         "Char"
         "CmdString"
+        "Symbol"  # a (quoted) Symbol
     "END_LITERAL"
 
     "BEGIN_DELIMITERS"
@@ -1099,6 +1100,7 @@ const _nonunique_kind_names = Set([
     K"Whitespace"
     K"NewlineWs"
     K"Identifier"
+    K"Symbol"
     K"Placeholder"
 
     K"ErrorEofMultiComment"

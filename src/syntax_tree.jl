@@ -160,6 +160,7 @@ function leaf_string(ex)
     # TODO: Dispatch on kind extension module (??)
     return k == K"Placeholder" ? "□"*string(value) :
            is_identifier(k)    ? string(value)     :
+           k == K"Symbol"      ? repr(value)       :
            value isa Symbol    ? string(value)     : # see parse_julia_literal for other cases which go here
            repr(value)
 end

@@ -416,7 +416,7 @@ function parse_julia_literal(txtbuf::Vector{UInt8}, head::SyntaxHead, srcrange)
         parse_int_literal(val_str)
     elseif k in KSet"BinInt OctInt HexInt"
         parse_uint_literal(val_str, k)
-    elseif k == K"Identifier" || k == K"Placeholder"
+    elseif k == K"Identifier" || k == K"Placeholder" || k == K"Symbol"
         if has_flags(head, RAW_STRING_FLAG)
             io = IOBuffer()
             unescape_raw_string(io, txtbuf, first(srcrange), last(srcrange)+1, false)
