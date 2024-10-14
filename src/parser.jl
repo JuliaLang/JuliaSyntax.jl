@@ -1813,6 +1813,13 @@ function parse_resword(ps::ParseState)
         bump(ps, TRIVIA_FLAG)
         parse_cond(ps)
         parse_block(ps)
+        bump_trivia(ps)
+        if peek(ps) == K"else"
+            else_mark = position(ps)
+            bump(ps, TRIVIA_FLAG)
+            parse_block(ps)
+            min_supported_version(v"1.12", ps, else_mark, "`else` after `for`")
+        end
         bump_closing_token(ps, K"end")
         emit(ps, mark, K"while")
     elseif word == K"for"
@@ -1821,6 +1828,13 @@ function parse_resword(ps::ParseState)
         bump(ps, TRIVIA_FLAG)
         parse_iteration_specs(ps)
         parse_block(ps)
+        bump_trivia(ps)
+        if peek(ps) == K"else"
+            else_mark = position(ps)
+            bump(ps, TRIVIA_FLAG)
+            parse_block(ps)
+            min_supported_version(v"1.12", ps, else_mark, "`else` after `for`")
+        end
         bump_closing_token(ps, K"end")
         emit(ps, mark, K"for")
     elseif word == K"let"
