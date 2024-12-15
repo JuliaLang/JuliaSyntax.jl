@@ -21,24 +21,27 @@ struct ParseState
     whitespace_newline::Bool
     # Enable parsing `where` with high precedence
     where_enabled::Bool
+    in_parens::Bool
 end
 
 # Normal context
 function ParseState(stream::ParseStream)
-    ParseState(stream, true, false, false, false, false, true)
+    ParseState(stream, true, false, false, false, false, true, false)
 end
 
 function ParseState(ps::ParseState; range_colon_enabled=nothing,
                     space_sensitive=nothing, for_generator=nothing,
                     end_symbol=nothing, whitespace_newline=nothing,
-                    where_enabled=nothing)
+                    where_enabled=nothing,
+                    in_parens=nothing)
     ParseState(ps.stream,
         range_colon_enabled === nothing ? ps.range_colon_enabled : range_colon_enabled,
         space_sensitive === nothing ? ps.space_sensitive : space_sensitive,
         for_generator === nothing ? ps.for_generator : for_generator,
         end_symbol === nothing ? ps.end_symbol : end_symbol,
         whitespace_newline === nothing ? ps.whitespace_newline : whitespace_newline,
-        where_enabled === nothing ? ps.where_enabled : where_enabled)
+        where_enabled === nothing ? ps.where_enabled : where_enabled,
+        in_parens === nothing ? ps.in_parens : in_parens)
 end
 
 # Functions to change parse state
@@ -56,7 +59,7 @@ end
 function with_space_sensitive(ps::ParseState)
     ParseState(ps,
                space_sensitive=true,
-               whitespace_newline=false)
+               whitespace_newline=ps.in_parens)
 end
 
 # Convenient wrappers for ParseStream
@@ -3037,7 +3040,9 @@ function parse_paren(ps::ParseState, check_identifiers=true)
     ps = ParseState(ps, range_colon_enabled=true,
                     space_sensitive=false,
                     where_enabled=true,
-                    whitespace_newline=true)
+                    whitespace_newline=true,
+                    in_parens=peek(ps, 2) == K"@")
+    @show peek(ps, 2)
     mark = position(ps)
     @check peek(ps) == K"("
     bump(ps, TRIVIA_FLAG) # K"("
@@ -3054,7 +3059,7 @@ function parse_paren(ps::ParseState, check_identifiers=true)
         bump_closing_token(ps, K")")
         emit(ps, mark, K"parens")
     elseif !check_identifiers && k == K"::" &&
-            peek(ps, 2, skip_newlines=true) == K")"
+        peek(ps, 2, skip_newlines=true) == K")"
         # allow :(::) as a special case
         # :(::)  ==>  (quote-: (parens ::))
         bump(ps)
@@ -3066,7 +3071,7 @@ function parse_paren(ps::ParseState, check_identifiers=true)
         initial_semi = peek(ps) == K";"
         opts = parse_brackets(ps, K")") do had_commas, had_splat, num_semis, num_subexprs
             is_tuple = had_commas || (had_splat && num_semis >= 1) ||
-                       (initial_semi && (num_semis == 1 || num_subexprs > 0))
+                (initial_semi && (num_semis == 1 || num_subexprs > 0))
             return (needs_parameters=is_tuple,
                     is_tuple=is_tuple,
                     is_block=num_semis > 0)

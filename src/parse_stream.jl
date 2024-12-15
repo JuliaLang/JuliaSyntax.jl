@@ -349,7 +349,7 @@ mutable struct ParseStream
     # May be different from VERSION!
     version::Tuple{Int,Int}
 
-    function ParseStream(text_buf::Vector{UInt8}, text_root, next_byte::Integer,
+    function ParseStream(text_buf::Union{Vector{UInt8}, Memory{UInt8}}, text_root, next_byte::Integer,
                          version::VersionNumber)
         io = IOBuffer(text_buf)
         seek(io, next_byte-1)
@@ -492,7 +492,7 @@ function _buffer_lookahead_tokens(lexer, lookahead)
         end
     end
 end
-
+ 
 # Return the index of the next byte of the input
 function _next_byte(stream)
     last(stream.tokens).next_byte
