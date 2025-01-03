@@ -589,6 +589,186 @@ function parse_eq_star(ps::ParseState)
     end
 end
 
+function binding_power(tok) # TODO: prefix ops
+    k = kind(tok)                      # lhs rhs
+    return k in KSet"NewlineWs EndMarker" ? (0,   0) :
+           k == K"("                 ? (1000, 1)     :
+           k == K")"                 ? (1,    1001)  :
+           k > K"BEGIN_OPS" ? (
+               k <  K"BEGIN_ASSIGNMENTS" ? nothing      :   # FIXME?
+               k <= K"END_ASSIGNMENTS"   ? (11,  10)    :
+               k <= K"END_PAIRARROW"     ? (31,  30)    :
+               k <= K"END_CONDITIONAL"   ? (50,  50)    :   # FIXME Ternary a ? b : c
+               k <= K"END_ARROW"         ? (71,  70)    :
+               k <= K"END_LAZYOR"        ? (91,  90)    :
+               k <= K"END_LAZYAND"       ? (111, 110)   :
+               k <= K"END_COMPARISON"    ? (130, 130)   :   # FIXME n-ary K"comparison"
+               k <= K"<|"                ? (151, 150)   :
+               k <= K"|>"                ? (170, 171)   :
+               k <= K"END_COLON"         ? (190, 191)   :   # FIXME Optional infix ternary a : b : c
+               k <= K"END_PLUS"          ? (210, 211)   :
+               k <= K"END_TIMES"         ? (230, 231)   :
+               k <= K"END_RATIONAL"      ? (240, 241)   :
+               k <= K"END_BITSHIFTS"     ? (251, 250)   :
+               k <= K"END_POWER"         ? (261, 260)   :
+               k <= K"END_DECL"          ? (270, 271)   :
+               k == K"where"             ? (280, 281)   :
+               k == K"."                 ? (290, 291)   :
+               k <= K"!"                 ? (310, 311)   :
+               k <= K"'"                 ? (320, 1)     :
+               k <= K"->"                ? (330, 331)   :
+               k <= K"END_UNICODE_OPS"   ? (340, 341)   :
+               nothing
+            ) :
+           nothing
+end
+
+# Expression parser based on the Shunting-Yard algorithm
+#
+# This is a form of operator precedence parsing basically equivalent to
+# "precedence climbing" / "Pratt parsing". In contrast to Pratt parsing, we
+# keep all the state in an explicit stack.
+#
+# Some error reporting is included in this implementation; this seems fairly
+# easy to do, despite what some people claim about the shunting yard. Having
+# the explicit stack gives us easy access to a lot more state so it's likely
+# that error reporting is easier than in a recursive formulation.
+#
+# Some refs:
+# https://matklad.github.io/2020/04/15/from-pratt-to-dijkstra.html
+# https://en.wikipedia.org/wiki/Shunting_yard_algorithm
+function shunting_yard(ps::ParseState, min_binding_power)
+    # Operator stack. Top kept separately for efficiency
+    mark = position(ps)  # Mark to the left of the last non-operator
+    prev_right_bp = min_binding_power # Right binding power of the last operator bumped
+    prev_op = true       # True if previous was an operator
+    stack = []
+    while true
+        skip_nl = ps.whitespace_newline || prev_op # TODO: Or in parens.
+        tok = peek_token(ps, skip_newlines=skip_nl)
+        k = kind(tok)
+        bps = binding_power(k)
+        juxtapose_error = false
+        if isnothing(bps)
+            if !prev_op
+                # Treat erroneous juxtaposition as a low binding power "error operator"
+                juxtapose_error = true
+                k = K"error"
+                bps = (5,5)
+            else
+                mark = position(ps)
+                @assert is_literal(k) || is_identifier(k)
+                bump(ps, skip_newlines=skip_nl)
+                prev_op = false
+                continue
+            end
+        end
+
+        if prev_op && !(is_unary_op(tok) || k == K"(")
+            @error "bump term err"
+            bump_trivia(ps, error="Expected term", skip_newlines=skip_nl)
+        end
+        left_bp, right_bp = bps
+        # max_terms = is_suffixed(tok)                       ? 2            :
+        #             (k == K"+" || k == K"++" || k == K"*") ? typemax(Int) :
+        #              k == K":"                             ? 3            :
+        curr_chain_op = k in KSet"+ ++ *" && !is_decorated(tok)
+        while !isempty(stack) && stack[end].right_bp > left_bp &&
+                !(curr_chain_op && (t2 = stack[end].tok; kind(t2) == k && !is_decorated(t2)))
+            top = pop!(stack)
+            tk = kind(top.tok)
+            if tk == K"error" || is_syntactic_unary_op(k)
+                emit(ps, top.mark, tk)
+            elseif tk == K")"
+                if !isempty(stack) && kind(stack[end].tok) == K"("
+                    top = pop!(stack)
+                    emit(ps, top.mark, K"parens")
+                else
+                    reset_node!(ps, top.op_mark, kind=K"error")
+                    pos2 = ParseStreamPosition(top.op_mark.token_index+1, top.op_mark.range_index)
+                    emit_diagnostic(ps, top.op_mark, pos2, error="found `)` without matching `(`")
+                end
+            elseif tk == K"("
+                reset_node!(ps, top.op_mark, kind=K"error")
+                pos2 = ParseStreamPosition(top.op_mark.token_index+1, top.op_mark.range_index)
+                emit_diagnostic(ps, top.op_mark, pos2, error="found `(` without matching `)`")
+            else
+                is_chain_op = tk in KSet"+ ++ *" && !is_decorated(top.tok) &&
+                    !isempty(stack) && (t2 = stack[end].tok; kind(t2) == tk && !is_decorated(t2))
+                if is_chain_op
+                    # Chains are consumed from right to left and we only want
+                    # the leftmost operator token as nontrivia.
+                    reset_node!(ps, top.op_mark, flags=TRIVIA_FLAG)
+                else
+                    # FIXME PREFIX_OP_FLAG
+                    emit(ps, top.mark, is_dotted(top.tok) ? K"dotcall" : K"call",
+                         tk == K"'" ? POSTFIX_OP_FLAG : INFIX_FLAG)
+                end
+            end
+            mark = top.mark
+        end
+
+        if right_bp <= min_binding_power
+            @assert isempty(stack) # TODO?
+            break
+        end
+
+        op_mark = if juxtapose_error
+            bump_trivia(ps, error="Cannot juxtapose expressions", skip_newlines=skip_nl)
+        elseif k == K")" || k == K"("
+            # TODO: There's a lot of hacks here to support `(` and `)` and it's
+            # probably still buggy. For example, I think the termination
+            # condition at nonzero min_binding_power is buggy in the presence
+            # of parens. Overall, it's probably best just to have a separate
+            # special case for parens.  
+            #
+            # Especially because they will need to dispatch to some quite
+            # complex code when we detect "anything interesting" - there's soo
+            # many cases where parens aren't just grouping:
+            # - function call syntax without commas `*(x)`
+            # - tuples `(x,)`
+            # - named tuples `(; x)`
+            #
+            # There's even cases which are almost the same as the above, but
+            # where parens are just grouping after all, such as
+            # - unary operator syntax where `()` is grouping like `+(x)`
+            #
+            # See parse_paren and parse_unary etc :(
+            #
+            bump_trivia(ps, skip_newlines=skip_nl)
+            m = position(ps)
+            bump(ps, TRIVIA_FLAG, skip_newlines=skip_nl)
+            if k == K"("
+                mark = m
+            end
+            m
+        else
+            bump_trivia(ps, skip_newlines=skip_nl) # or support skip_newlines in bump_dotsplit
+            bump_dotsplit(ps, remap_kind=K"Identifier")
+        end
+
+        prev_op = !(k == K"'" || k == K")") # postfix ops
+
+        # TODO: Deal with postfix unary ops here
+        push!(stack, (; mark, right_bp, tok, op_mark))
+    end
+end
+
+# Hacky convenience driver for shunting_yard
+function parse_sy(text; kws...)
+    parse_sy(SyntaxNode, text; kws...)
+end
+
+function parse_sy(::Type{TreeType}, text; ignore_errors=false) where {TreeType}
+    stream = ParseStream(text)
+    shunting_yard(ParseState(stream), 0)
+    validate_tokens(stream)
+    if !ignore_errors && !isempty(stream.diagnostics)
+        throw(ParseError(stream))
+    end
+    build_tree(TreeType, stream, keep_parens=true)
+end
+
 # a = b  ==>  (= a b)
 #
 # flisp: parse-assignment
