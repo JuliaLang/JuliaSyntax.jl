@@ -488,9 +488,13 @@ tests = [
         # while
         "while cond body end"  =>  "(while cond (block body))"
         "while x < y \n a \n b \n end"  =>  "(while (call-i x < y) (block a b))"
+        ((v=v"1.12",), "while x < y \n a \n else \n b \n end") =>
+            "(while (call-i x < y) (block a) (block b))"
         # for
         "for x in xs end" => "(for (iteration (in x xs)) (block))"
         "for x in xs, y in ys \n a \n end" => "(for (iteration (in x xs) (in y ys)) (block a))"
+        ((v=v"1.12",), "for x in xs \n a \n else \n b \n end") =>
+            "(for (iteration (in x xs)) (block a) (block b))"
         # let
         "let x=1\n end"    =>  "(let (block (= x 1)) (block))"
         "let x=1 ; end"    =>  "(let (block (= x 1)) (block))"
