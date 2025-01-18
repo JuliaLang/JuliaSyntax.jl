@@ -391,7 +391,9 @@ tests = [
         "f() do x, y\n body end"  =>  "(call f (do (tuple x y) (block body)))"
         "f(x) do y body end"  =>  "(call f x (do (tuple y) (block body)))"
         "@f(x) do y body end" =>  "(macrocall-p @f x (do (tuple y) (block body)))"
-
+        "f(x) do (y::T) where T body end"  =>  "(call f x (do (where (parens (::-i y T)) T) (block body)))"
+        "f(x) do (y::T, z::S) where {S,T} body end"  =>  "(call f x (do (where (tuple-p (::-i y T) (::-i z S)) (braces S T)) (block body)))"
+        
         # square brackets
         "@S[a,b]"  => "(macrocall @S (vect a b))"
         "@S[a b]"  => "(macrocall @S (hcat a b))"
