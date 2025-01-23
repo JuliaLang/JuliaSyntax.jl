@@ -920,11 +920,11 @@ end
     if VERSION >= v"1.10-DEV"
         push!(ops, "⥷ ⥺ ⟇")
     end
-    if VERSION >= v"1.12-DEV"
-        push!(ops, "🢲")
-    end
     allops = split(join(ops, " "), " ")
     @test all(s->Base.isoperator(Symbol(s)) == is_operator(first(collect(tokenize(s))).kind), allops)
+
+    # "\U1f8b2" added in Julia 1.12
+    @test is_operator(first(collect(tokenize("🢲"))))
 end
 
 const all_kws = Set([
