@@ -15,7 +15,7 @@ struct ParseState
     space_sensitive::Bool
     # Seeing `for` stops parsing macro arguments and makes a generator
     for_generator::Bool
-    # Treat 'end' like a normal symbol instead of a reserved word
+    # Treat begin/end like special symbols instead of reserved words
     end_symbol::Bool
     # Treat newline like ordinary whitespace instead of as a potential separator
     whitespace_newline::Bool
@@ -3627,6 +3627,14 @@ function parse_atom(ps::ParseState, check_identifiers=true, has_unary_prefix=fal
         elseif check_identifiers && is_closing_token(ps, leading_kind)
             # :(end)  ==>  (quote-: (error end))
             bump(ps, error="invalid identifier")
+        elseif ps.end_symbol && leading_kind in KSet"begin end"
+            # https://github.com/JuliaLang/julia/issues/57269
+            # Parse a[begin] differently from a[var"begin"]
+            if leading_kind == K"begin"
+                bump(ps, remap_kind=K"RefBegin")
+            elseif leading_kind == K"end"
+                bump(ps, remap_kind=K"RefEnd")
+            end
         else
             # Remap keywords to identifiers.
             # :end  ==>  (quote-: end)
