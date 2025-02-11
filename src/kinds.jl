@@ -198,6 +198,10 @@ register_kinds!(JuliaSyntax, 0, [
         # macro name may not appear as characters in the source: The `@` may be
         # detached from the macro name as in `@A.x` (ugh!!), or have a _str or _cmd
         # suffix appended.
+        "BEGIN_REF_IDENTIFIERS"
+            "RefBegin"
+            "RefEnd"
+        "BEGIN_REF_IDENTIFIERS"
         "BEGIN_MACRO_NAMES"
             "MacroName"
             "StringMacroName"
