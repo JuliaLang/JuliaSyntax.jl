@@ -410,6 +410,9 @@ tests = [
         "(a=1)[]" =>  "(ref (parens (= a 1)))"
         "a[end]"  =>  "(ref a end)"
         "a[begin]"  =>  "(ref a begin)"
+        "a[var\"end\"]"  =>  "(ref a (var end))"
+        "a[var\"begin\"]"  =>  "(ref a (var begin))"
+        "a[var\"test\"]"  =>  "(ref a (var test))"
         "a[:(end)]" => "(typed_hcat a (quote-: (parens (error-t))) (error-t))"
         "T[x   y]"  =>  "(typed_hcat T x y)"
         "T[x ; y]"  =>  "(typed_vcat T x y)"
@@ -1153,6 +1156,9 @@ parsestmt_with_kind_tests = [
     "a >>= b" => "(op= a::Identifier >>::Identifier b::Identifier)"
     ":+="    => "(quote-: +=::op=)"
     ":.+="   => "(quote-: (. +=::op=))"
+    # TODO: specify version 1.12
+    # "a[begin]" => "(ref a::Identifier begin::begin)"
+    # "a[end]" => "(ref a::Identifier end::end)"
 ]
 
 @testset "parser `Kind` remapping" begin
