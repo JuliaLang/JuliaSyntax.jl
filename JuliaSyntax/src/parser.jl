@@ -3627,14 +3627,10 @@ function parse_atom(ps::ParseState, check_identifiers=true, has_unary_prefix=fal
         elseif check_identifiers && is_closing_token(ps, leading_kind)
             # :(end)  ==>  (quote-: (error end))
             bump(ps, error="invalid identifier")
-        elseif ps.end_symbol && leading_kind in KSet"begin end"
+        elseif ps.end_symbol && leading_kind in KSet"begin end" && ps.stream.version >= (1, 12)
             # https://github.com/JuliaLang/julia/issues/57269
             # Parse a[begin] differently from a[var"begin"]
-            if leading_kind == K"begin"
-                bump(ps, remap_kind=K"RefBegin")
-            elseif leading_kind == K"end"
-                bump(ps, remap_kind=K"RefEnd")
-            end
+            bump(ps)
         else
             # Remap keywords to identifiers.
             # :end  ==>  (quote-: end)
