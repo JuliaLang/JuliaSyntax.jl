@@ -76,9 +76,9 @@ function _leaf_to_Expr(source, txtbuf, txtbuf_offset, head, srcrange, node)
         return k == K"error" ?
             Expr(:error) :
             Expr(:error, "$(_token_error_descriptions[k]): `$(source[srcrange])`")
-    elseif k == K"RefBegin"
+    elseif k == K"begin" # begin/end as firstindex/lastindex
         return Expr(:begin)
-    elseif k == K"RefEnd"
+    elseif k == K"end"
         return Expr(:end)
     else
         val = isnothing(node) ?
