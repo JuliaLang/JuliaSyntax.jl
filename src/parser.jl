@@ -2538,10 +2538,10 @@ function parse_import(ps::ParseState, word, has_import_prefix)
         parse_atsym(ps, false)
         emit(ps, mark, K"as")
         if word == K"using" && !has_import_prefix
+            # v1.10:
             # using A as B     ==>  (using (error (as (importpath A) B)))
             # using A, B as C  ==>  (using (importpath A) (error (as (importpath B) C)))
-            emit(ps, mark, K"error",
-                 error="`using` with `as` renaming requires a `:` and context module")
+            min_supported_version(v"1.11", ps, mark, "`using Mod as NewName`")
         end
         #v1.5: import A as B     ==>  (import (error (as (importpath A) B)))
         min_supported_version(v"1.6", ps, mark, "`import ... as`")
