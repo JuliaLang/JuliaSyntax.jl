@@ -1156,14 +1156,19 @@ parsestmt_with_kind_tests = [
     "a >>= b" => "(op= a::Identifier >>::Identifier b::Identifier)"
     ":+="    => "(quote-: +=::op=)"
     ":.+="   => "(quote-: (. +=::op=))"
-    # TODO: specify version 1.12
-    # "a[begin]" => "(ref a::Identifier begin::begin)"
-    # "a[end]" => "(ref a::Identifier end::end)"
+    ((v=v"1.13",), "a[begin]") => "(ref a::Identifier begin::begin)"
+    ((v=v"1.13",), "a[end]") => "(ref a::Identifier end::end)"
 ]
 
 @testset "parser `Kind` remapping" begin
     @testset "$(repr(input))" for (input, output) in parsestmt_with_kind_tests
-        input = ((show_kind=true,), input)
+        if !(input isa AbstractString)
+            opts, input_s = input
+        else
+            opts = NamedTuple()
+            input_s = input
+        end
+        input = ((show_kind=true, opts...), input_s)
         test_parse(JuliaSyntax.parse_stmts, input, output)
     end
 end
