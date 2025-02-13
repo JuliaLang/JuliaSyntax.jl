@@ -140,7 +140,7 @@ function _string_to_Expr(args)
         #   """\n  a\n  b""" ==>  "a\nb"
         return only(args2)
     else
-        # This only happens when the kind is K"string" or when an error has occurred. 
+        # This only happens when the kind is K"string" or when an error has occurred.
         return Expr(:string, args2...)
     end
 end
@@ -159,7 +159,7 @@ function _fixup_Expr_children!(head, loc, args)
         arg = args[i]
         was_parens = @isexpr(arg, :parens)
         arg = _strip_parens(arg)
-        if @isexpr(arg, :(=)) && eq_to_kw_in_call && i > 1 
+        if @isexpr(arg, :(=)) && eq_to_kw_in_call && i > 1
             arg = Expr(:kw, arg.args...)
         elseif k != K"parens" && @isexpr(arg, :., 1) && arg.args[1] isa Tuple
             h, a = arg.args[1]::Tuple{SyntaxHead,Any}
@@ -322,10 +322,10 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         args[1] = length(iters) == 1 ? only(iters) : Expr(:block, iters...)
         # Add extra line number node for the `end` of the block. This may seem
         # useless but it affects code coverage.
-        push!(args[2].args, endloc)
+        push!(args[end].args, endloc)
     elseif k == K"while"
         # Line number node for the `end` of the block as in `for` loops.
-        push!(args[2].args, endloc)
+        push!(args[end].args, endloc)
     elseif k in KSet"tuple vect braces"
         # Move parameters blocks to args[1]
         _reorder_parameters!(args, 1)
