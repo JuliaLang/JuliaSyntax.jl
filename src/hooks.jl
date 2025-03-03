@@ -137,18 +137,22 @@ end
 const _debug_log = Ref{Union{Nothing,IO}}(nothing)
 
 function core_parser_hook(code, filename::String, lineno::Int, offset::Int, options::Symbol)
+    # TODO: Check that we do all this input wrangling without copying the
+    # code buffer
+    if code isa Core.SimpleVector
+        # The C entry points will pass us this form.
+        (ptr,len) = code
+        code = String(unsafe_wrap(Array, ptr, len))
+    elseif !(code isa String || code isa SubString || code isa Vector{UInt8})
+        # For non-Base string types, convert to UTF-8 encoding, using an
+        # invokelatest to avoid world age issues.
+        code = Base.invokelatest(String, code)::String
+    end
+    core_parser_hook(code, filename, lineno, offset, options)
+end
+
+function core_parser_hook(code::String, filename::String, lineno::Int, offset::Int, options::Symbol)::Core.SimpleVector
     try
-        # TODO: Check that we do all this input wrangling without copying the
-        # code buffer
-        if code isa Core.SimpleVector
-            # The C entry points will pass us this form.
-            (ptr,len) = code
-            code = String(unsafe_wrap(Array, ptr, len))
-        elseif !(code isa String || code isa SubString || code isa Vector{UInt8})
-            # For non-Base string types, convert to UTF-8 encoding, using an
-            # invokelatest to avoid world age issues.
-            code = Base.invokelatest(String, code)
-        end
         if !isnothing(_debug_log[])
             print(_debug_log[], """
                   #-#-#-------------------------------
@@ -213,7 +217,7 @@ function core_parser_hook(code, filename::String, lineno::Int, offset::Int, opti
                 # * appends the error message
                 topex = Expr(tree)
                 @assert topex.head == :toplevel
-                i = findfirst(_has_nested_error, topex.args)
+                i = findfirst(_has_nested_error, topex.args)::Int
                 if i > 1 && topex.args[i-1] isa LineNumberNode
                     i -= 1
                 end
@@ -399,4 +403,3 @@ end
 # Convenience functions to mirror `JuliaSyntax.parsestmt(Expr, ...)` in simple cases.
 fl_parse(::Type{Expr}, args...; kws...) = fl_parse(args...; kws...)
 fl_parseall(::Type{Expr}, args...; kws...) = fl_parseall(args...; kws...)
-
