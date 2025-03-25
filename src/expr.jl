@@ -8,7 +8,7 @@
 Type inference friendly replacement for `Meta.isexpr`.
 
 When using the pattern
-```
+```julia
 if @isexpr(ex, headsym)
     body
 end
@@ -26,11 +26,6 @@ macro isexpr(ex, head, nargs)
     :($(esc(ex)) isa Expr &&
       $(esc(ex)).head == $(esc(head)) &&
       length($(esc(ex)).args) == $(esc(nargs)))
-end
-
-function is_eventually_call(ex)
-    return ex isa Expr && (ex.head === :call ||
-        (ex.head === :where || ex.head === :(::)) && is_eventually_call(ex.args[1]))
 end
 
 function _reorder_parameters!(args::Vector{Any}, params_pos)
@@ -68,18 +63,23 @@ function _strip_parens(ex)
     end
 end
 
-function _leaf_to_Expr(source, txtbuf, head, srcrange, node)
+# Get Julia value of leaf node as it would be represented in `Expr` form
+function _expr_leaf_val(node::SyntaxNode)
+    node.val
+end
+
+function _leaf_to_Expr(source, txtbuf, txtbuf_offset, head, srcrange, node)
     k = kind(head)
-    if k == K"core_@cmd"
-        return GlobalRef(Core, Symbol("@cmd"))
-    elseif k == K"MacroName" && view(source, srcrange) == "."
+    if k == K"MacroName" && view(source, srcrange) == "."
         return Symbol("@__dot__")
     elseif is_error(k)
         return k == K"error" ?
             Expr(:error) :
             Expr(:error, "$(_token_error_descriptions[k]): `$(source[srcrange])`")
     else
-        val = isnothing(node) ? parse_julia_literal(txtbuf, head, srcrange) : node.val
+        val = isnothing(node) ?
+            parse_julia_literal(txtbuf, head, srcrange .+ txtbuf_offset) :
+            _expr_leaf_val(node)
         if val isa Union{Int128,UInt128,BigInt}
             # Ignore the values of large integers and convert them back to
             # symbolic/textural form for compatibility with the Expr
@@ -102,7 +102,7 @@ end
 #
 # This function concatenating adjacent string chunks together as done in the
 # reference parser.
-function _string_to_Expr(k, args)
+function _string_to_Expr(args)
     args2 = Any[]
     i = 1
     while i <= length(args)
@@ -140,7 +140,7 @@ function _string_to_Expr(k, args)
         #   """\n  a\n  b""" ==>  "a\nb"
         return only(args2)
     else
-        # This only happens when k == K"string" or when an error has occurred. 
+        # This only happens when the kind is K"string" or when an error has occurred. 
         return Expr(:string, args2...)
     end
 end
@@ -193,6 +193,17 @@ function _extract_do_lambda!(args)
     end
 end
 
+function _append_iterspec!(args, ex)
+    if @isexpr(ex, :iteration)
+        for iter in ex.args::Vector{Any}
+            push!(args, Expr(:(=), iter.args...))
+        end
+    else
+        push!(args, ex)
+    end
+    return args
+end
+
 # Convert internal node of the JuliaSyntax parse tree to an Expr
 function _internal_node_to_Expr(source, srcrange, head, childranges, childheads, args)
     k = kind(head)
@@ -201,12 +212,16 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         # K"var" and K"char" nodes, but this discounts having embedded error
         # nodes when ignore_errors=true is set.
         return args[1]
-    elseif k == K"string" || k == K"cmdstring"
-        return _string_to_Expr(k, args)
+    elseif k == K"string"
+        return _string_to_Expr(args)
     end
 
     loc = source_location(LineNumberNode, source, first(srcrange))
     endloc = source_location(LineNumberNode, source, last(srcrange))
+
+    if k == K"cmdstring"
+        return Expr(:macrocall, GlobalRef(Core, Symbol("@cmd")), loc, _string_to_Expr(args))
+    end
 
     _fixup_Expr_children!(head, loc, args)
 
@@ -217,17 +232,24 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
 
     if k == K"?"
         headsym = :if
-    elseif k == K"=" && !is_decorated(head)
-        a2 = args[2]
-        if is_eventually_call(args[1])
-            if @isexpr(a2, :block)
-                pushfirst!(a2.args, loc)
-            else
-                # Add block for short form function locations
-                args[2] = Expr(:block, loc, a2)
+    elseif k == K"op=" && length(args) == 3
+        lhs = args[1]
+        op = args[2]
+        rhs = args[3]
+        headstr = string(args[2], '=')
+        if is_dotted(head)
+            headstr = '.'*headstr
+        end
+        headsym = Symbol(headstr)
+        args = Any[lhs, rhs]
+    elseif k == K"macrocall"
+        if length(args) >= 2
+            a2 = args[2]
+            if @isexpr(a2, :macrocall) && kind(childheads[1]) == K"CmdMacroName"
+                # Fix up for custom cmd macros like foo`x`
+                args[2] = a2.args[3]
             end
         end
-    elseif k == K"macrocall"
         do_lambda = _extract_do_lambda!(args)
         _reorder_parameters!(args, 2)
         insert!(args, 2, loc)
@@ -287,7 +309,7 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
             if !@isexpr(a2, :quote) && !(a2 isa QuoteNode)
                 args[2] = QuoteNode(a2)
             end
-        elseif length(args) == 1 && is_operator(childheads[1])
+        elseif length(args) == 1
             # Hack: Here we preserve the head of the operator to determine whether
             # we need to coalesce it with the dot into a single symbol later on.
             args[1] = (childheads[1], args[1])
@@ -296,10 +318,8 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         # Move parameters blocks to args[2]
         _reorder_parameters!(args, 2)
     elseif k == K"for"
-        a1 = args[1]
-        if @isexpr(a1, :cartesian_iterator)
-            args[1] = Expr(:block, a1.args...)
-        end
+        iters = _append_iterspec!([], args[1])
+        args[1] = length(iters) == 1 ? only(iters) : Expr(:block, iters...)
         # Add extra line number node for the `end` of the block. This may seem
         # useless but it affects code coverage.
         push!(args[2].args, endloc)
@@ -317,6 +337,10 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
                 _reorder_parameters!(a2a, 2)
                 args = Any[args[1], a2a...]
             end
+        end
+    elseif k == K"catch"
+        if kind(childheads[1]) == K"Placeholder"
+            args[1] = false
         end
     elseif k == K"try"
         # Try children in source order:
@@ -355,12 +379,8 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         # source-ordered `generator` format.
         gen = args[1]
         for j = length(args):-1:2
-            aj = args[j]
-            if @isexpr(aj, :cartesian_iterator)
-                gen = Expr(:generator, gen, aj.args...)
-            else
-                gen = Expr(:generator, gen, aj)
-            end
+            gen = Expr(:generator, gen)
+            _append_iterspec!(gen.args, args[j])
             if j < length(args)
                 # Additional `for`s flatten the inner generator
                 gen = Expr(:flatten, gen)
@@ -369,14 +389,7 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         return gen
     elseif k == K"filter"
         @assert length(args) == 2
-        iterspec = args[1]
-        outargs = Any[args[2]]
-        if @isexpr(iterspec, :cartesian_iterator)
-            append!(outargs, iterspec.args)
-        else
-            push!(outargs, iterspec)
-        end
-        args = outargs
+        args = _append_iterspec!(Any[args[2]], args[1])
     elseif k == K"nrow" || k == K"ncat"
         # For lack of a better place, the dimension argument to nrow/ncat
         # is stored in the flags
@@ -387,23 +400,55 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         # Block for conditional's source location
         args[1] = Expr(:block, loc, args[1])
     elseif k == K"->"
+        a1 = args[1]
+        if @isexpr(a1, :tuple)
+            # TODO: This makes the Expr form objectively worse for the sake of
+            # compatibility. We should consider deleting this special case in
+            # the future as a minor change.
+            if length(a1.args) == 1 &&
+                    (!has_flags(childheads[1], PARENS_FLAG) ||
+                     !has_flags(childheads[1], TRAILING_COMMA_FLAG)) &&
+                    !Meta.isexpr(a1.args[1], :parameters)
+                # `(a) -> c` is parsed without tuple on lhs in Expr form
+                args[1] = a1.args[1]
+            elseif length(a1.args) == 2 && (a11 = a1.args[1]; @isexpr(a11, :parameters) &&
+                                            length(a11.args) <= 1 && !Meta.isexpr(a1.args[2], :(...)))
+                # `(a; b=1) -> c`  parses args as `block` in Expr form :-(
+                if length(a11.args) == 0
+                    args[1] = Expr(:block, a1.args[2])
+                else
+                    a111 = only(a11.args)
+                    assgn = @isexpr(a111, :kw) ? Expr(:(=), a111.args...) : a111
+                    argloc = source_location(LineNumberNode, source, last(childranges[1]))
+                    args[1] = Expr(:block, a1.args[2], argloc, assgn)
+                end
+            end
+        end
         a2 = args[2]
+        # Add function source location to rhs; add block if necessary
         if @isexpr(a2, :block)
             pushfirst!(a2.args, loc)
         else
-            # Add block for source locations
             args[2] = Expr(:block, loc, args[2])
         end
     elseif k == K"function"
         if length(args) > 1
-            a1 = args[1]
-            if @isexpr(a1, :tuple)
-                # Convert to weird Expr forms for long-form anonymous functions.
-                #
-                # (function (tuple (... xs)) body) ==> (function (... xs) body)
-                if length(a1.args) == 1 && (a11 = a1.args[1]; @isexpr(a11, :...))
-                    # function (xs...) \n body end
-                    args[1] = a11
+            if has_flags(head, SHORT_FORM_FUNCTION_FLAG)
+                a2 = args[2]
+                if !@isexpr(a2, :block)
+                    args[2] = Expr(:block, a2)
+                end
+                headsym = :(=)
+            else
+                a1 = args[1]
+                if @isexpr(a1, :tuple)
+                    # Convert to weird Expr forms for long-form anonymous functions.
+                    #
+                    # (function (tuple (... xs)) body) ==> (function (... xs) body)
+                    if length(a1.args) == 1 && (a11 = a1.args[1]; @isexpr(a11, :...))
+                        # function (xs...) \n body end
+                        args[1] = a11
+                    end
                 end
             end
             pushfirst!((args[2]::Expr).args, loc)
@@ -431,7 +476,7 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         a1 = args[1]
         if @isexpr(a1, :block)
             a1a = (args[1]::Expr).args
-            # Ugly logic to strip the Expr(:block) in certian cases for compatibility
+            # Ugly logic to strip the Expr(:block) in certain cases for compatibility
             if length(a1a) == 1
                 a = a1a[1]
                 if a isa Symbol || @isexpr(a, :(=)) || @isexpr(a, :(::))
@@ -457,6 +502,19 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         headsym = :call
         pushfirst!(args, :*)
     elseif k == K"struct"
+        @assert args[2].head == :block
+        orig_fields = args[2].args
+        fields = Expr(:block)
+        for field in orig_fields
+            if @isexpr(field, :macrocall) && field.args[1] == GlobalRef(Core, Symbol("@doc"))
+                # @doc macro calls don't occur within structs, in Expr form.
+                push!(fields.args, field.args[3])
+                push!(fields.args, field.args[4])
+            else
+                push!(fields.args, field)
+            end
+        end
+        args[2] = fields
         pushfirst!(args, has_flags(head, MUTABLE_FLAG))
     elseif k == K"importpath"
         headsym = :.
@@ -501,7 +559,7 @@ function build_tree(::Type{Expr}, stream::ParseStream;
         end
         k = kind(head)
         if isnothing(nodechildren)
-            ex = _leaf_to_Expr(source, txtbuf, head, srcrange, nothing)
+            ex = _leaf_to_Expr(source, txtbuf, 0, head, srcrange, nothing)
         else
             resize!(childranges, length(nodechildren))
             resize!(childheads, length(nodechildren))
@@ -519,19 +577,24 @@ function build_tree(::Type{Expr}, stream::ParseStream;
     only(_fixup_Expr_children!(SyntaxHead(K"None",EMPTY_FLAGS), loc, Any[entry.ex]))
 end
 
-function _to_expr(node::SyntaxNode)
-    if !haschildren(node)
-        offset, txtbuf = _unsafe_wrap_substring(sourcetext(node.source))
-        return _leaf_to_Expr(node.source, txtbuf, head(node), range(node) .+ offset, node)
+function _to_expr(node)
+    file = sourcefile(node)
+    if is_leaf(node)
+        txtbuf_offset, txtbuf = _unsafe_wrap_substring(sourcetext(file))
+        return _leaf_to_Expr(file, txtbuf, txtbuf_offset, head(node), byte_range(node), node)
     end
     cs = children(node)
     args = Any[_to_expr(c) for c in cs]
-    _internal_node_to_Expr(node.source, range(node), head(node), range.(cs), head.(cs), args)
+    _internal_node_to_Expr(file, byte_range(node), head(node), byte_range.(cs), head.(cs), args)
+end
+
+function to_expr(node)
+    ex = _to_expr(node)
+    loc = source_location(LineNumberNode, node)
+    only(_fixup_Expr_children!(SyntaxHead(K"None",EMPTY_FLAGS), loc, Any[ex]))
 end
 
 function Base.Expr(node::SyntaxNode)
-    ex = _to_expr(node)
-    loc = source_location(LineNumberNode, node.source, first(range(node)))
-    only(_fixup_Expr_children!(SyntaxHead(K"None",EMPTY_FLAGS), loc, Any[ex]))
+    to_expr(node)
 end
 

@@ -1,35 +1,209 @@
 # Definition of Kind type - mapping from token string identifiers to
 # enumeration values as used in @K_str
-const _kind_names =
-[
-    "None"         # Placeholder; never emitted by lexer
-    "EndMarker"    # EOF
+
+"""
+    K"name"
+    Kind(namestr)
+
+`Kind` is a type tag for specifying the type of tokens and interior nodes of
+a syntax tree. Abstractly, this tag is used to define our own *sum types* for
+syntax tree nodes. We do this explicitly outside the Julia type system because
+(a) Julia doesn't have sum types and (b) we want concrete data structures which
+are unityped from the Julia compiler's point of view, for efficiency.
+
+Naming rules:
+* Kinds which correspond to exactly one textural form are represented with that
+  text. This includes keywords like K"for" and operators like K"*".
+* Kinds which represent many textural forms have UpperCamelCase names. This
+  includes kinds like K"Identifier" and K"Comment".
+* Kinds which exist merely as delimiters are all uppercase
+"""
+primitive type Kind 16 end
+
+# The implementation of Kind here is basically similar to @enum. However we use
+# the K_str macro to self-name these kinds with their literal representation,
+# rather than needing to invent a new name for each.
+
+const _kind_str_to_int = Dict{String,UInt16}()
+const _kind_int_to_str = Dict{UInt16,String}()
+const _kind_modules = Dict{Int,Union{Symbol,Module}}(
+    0=>:JuliaSyntax,
+    1=>:JuliaLowering,
+    2=>:JuliaSyntaxFormatter
+)
+# Number of bits reserved for kind id's belonging to a single module
+const _kind_nbits = 10
+const _kind_module_id_max = typemax(UInt16) >> _kind_nbits
+
+function Kind(x::Integer)
+    if x < 0 || x > typemax(UInt16)
+        throw(ArgumentError("Kind out of range: $x"))
+    end
+    return Base.bitcast(Kind, convert(UInt16, x))
+end
+
+function Kind(s::AbstractString)
+    i = get(_kind_str_to_int, s) do
+        error("unknown Kind name $(repr(s))")
+    end
+    Kind(i)
+end
+
+Base.string(x::Kind) = _kind_int_to_str[reinterpret(UInt16, x)]
+Base.print(io::IO, x::Kind) = print(io, string(x))
+
+Base.isless(x::Kind, y::Kind) = reinterpret(UInt16, x) < reinterpret(UInt16, y)
+
+function Base.show(io::IO, k::Kind)
+    print(io, "K\"", k, "\"")
+end
+
+# Save the string representation rather than the bit pattern so that kinds
+# can be serialized and deserialized across different JuliaSyntax versions.
+function Base.write(io::IO, k::Kind)
+    str = string(k)
+    write(io, UInt8(sizeof(str))) + write(io, str)
+end
+function Base.read(io::IO, ::Type{Kind})
+    len = read(io, UInt8)
+    str = String(read(io, len))
+    Kind(str)
+end
+
+function Base.parentmodule(k::Kind)
+    mod_id = reinterpret(UInt16, k) >> _kind_nbits
+    _kind_modules[mod_id]::Module
+end
+
+function _register_kinds!(kind_modules, int_to_kindstr, kind_str_to_int, mod, module_id, names)
+    if module_id > _kind_module_id_max
+        error("Kind module id $module_id is out of range")
+    elseif length(names) >= 1 << _kind_nbits
+        error("Too many kind names")
+    elseif !haskey(kind_modules, module_id)
+        kind_modules[module_id] = mod
+    else
+        m = kind_modules[module_id]
+        if m == nameof(mod)
+            # Ok: known kind module, but not loaded until now
+            kind_modules[module_id] = mod
+        elseif m == mod
+            existing_kinds = [(i = get(kind_str_to_int, n, nothing);
+                               isnothing(i) ? nothing : Kind(i)) for n in names]
+            if any(isnothing, existing_kinds) ||
+                    !issorted(existing_kinds) ||
+                    any(k->parentmodule(k) != mod, existing_kinds)
+                error("Error registering kinds for module $mod (register_kinds() called more than once inconsistently, or conflict with existing module kinds?)")
+            else
+                # Assume we're re-registering kinds as in top level vs `__init__`
+                return
+            end
+        else
+            error("Kind module ID $module_id already claimed by module $m")
+        end
+    end
+    # Process names to conflate category BEGIN/END markers with the first/last
+    # in the category.
+    i = 0
+    for name in names
+        normal_kind = false
+        if startswith(name, "BEGIN_")
+            j = i
+        elseif startswith(name, "END_")
+            j = i - 1
+        else
+            normal_kind = true
+            j = i
+            i += 1
+        end
+        kind_int = (module_id << _kind_nbits) | j
+        push!(kind_str_to_int, name=>kind_int)
+        if normal_kind
+            push!(int_to_kindstr, kind_int=>name)
+        end
+    end
+end
+
+"""
+    register_kinds!(mod, module_id, names)
+
+Register custom `Kind`s with the given `names`, belonging to a module `mod`. 
+`names` is an array of arbitrary strings.
+
+In order for kinds to be represented by a small number of bits, some nontrivial
+cooperation is required between modules using custom kinds:
+* The integer `module_id` is globally unique for each `mod` which will be used
+  together, and not larger than $_kind_module_id_max.
+* No two modules register the same `name`. The semantics of a given `kind` name
+  should be defined by the module which owns it.
+
+To allow ranges of kinds to be delimited and quickly tested for, some special
+names are allowed: `BEGIN_section` and `END_section` pairs are detected, and
+alias the next and previous kind id's respectively so that kinds in `section`
+can be tested with `BEGIN_section <= k <= END_section`.
+"""
+function register_kinds!(mod, module_id, names)
+    _register_kinds!(_kind_modules, _kind_int_to_str, _kind_str_to_int, mod, module_id, names)
+end
+
+#-------------------------------------------------------------------------------
+
+"""
+    K"s"
+
+The kind of a token or AST internal node with string "s".
+
+For example
+* K")" is the kind of the right parenthesis token
+* K"block" is the kind of a block of code (eg, statements within a begin-end).
+"""
+macro K_str(s)
+    Kind(s)
+end
+
+"""
+A set of kinds which can be used with the `in` operator.  For example
+
+    k in KSet"+ - *"
+"""
+macro KSet_str(str)
+    kinds = [Kind(s) for s in split(str)]
+
+    quote
+        ($(kinds...),)
+    end
+end
+
+"""
+    kind(x)
+
+Return the `Kind` of `x`.
+"""
+kind(k::Kind) = k
+
+
+#-------------------------------------------------------------------------------
+# Kinds used by JuliaSyntax
+register_kinds!(JuliaSyntax, 0, [
+    # Whitespace
     "Comment"
     "Whitespace"
     "NewlineWs"    # newline-containing whitespace
-    "Identifier"
-    "@"
-    ","
-    ";"
 
-    "BEGIN_ERRORS"
-        # Tokenization errors
-        "ErrorEofMultiComment"
-        "ErrorInvalidNumericConstant"
-        "ErrorHexFloatMustContainP"
-        "ErrorAmbiguousNumericConstant"
-        "ErrorAmbiguousNumericDotMultiply"
-        "ErrorInvalidInterpolationTerminator"
-        "ErrorNumericOverflow"
-        "ErrorInvalidEscapeSequence"
-        "ErrorOverLongCharacter"
-        "ErrorInvalidUTF8"
-        "ErrorInvisibleChar"
-        "ErrorUnknownCharacter"
-        "ErrorBidiFormatting"
-        # Generic error
-        "error"
-    "END_ERRORS"
+    # Identifiers
+    "BEGIN_IDENTIFIERS"
+        "Identifier"
+        "Placeholder" # Used for empty catch variables, and all-underscore identifiers in lowering
+        # Macro names are modelled as special kinds of identifiers because the full
+        # macro name may not appear as characters in the source: The `@` may be
+        # detached from the macro name as in `@A.x` (ugh!!), or have a _str or _cmd
+        # suffix appended.
+        "BEGIN_MACRO_NAMES"
+            "MacroName"
+            "StringMacroName"
+            "CmdMacroName"
+        "END_MACRO_NAMES"
+    "END_IDENTIFIERS"
 
     "BEGIN_KEYWORDS"
         "baremodule"
@@ -76,20 +250,27 @@ const _kind_names =
     "END_KEYWORDS"
 
     "BEGIN_LITERAL"
-        "Integer"
-        "BinInt"
-        "HexInt"
-        "OctInt"
-        "Float"
-        "Float32"
+        "BEGIN_NUMBERS"
+            "Bool"
+            "Integer"
+            "BinInt"
+            "HexInt"
+            "OctInt"
+            "Float"
+            "Float32"
+        "END_NUMBERS"
         "String"
         "Char"
         "CmdString"
-        "true"
-        "false"
     "END_LITERAL"
 
     "BEGIN_DELIMITERS"
+        # Punctuation
+        "@"
+        ","
+        ";"
+
+        # Paired delimiters
         "["
         "]"
         "{"
@@ -110,25 +291,12 @@ const _kind_names =
 
     # Level 1
     "BEGIN_ASSIGNMENTS"
+        "BEGIN_SYNTACTIC_ASSIGNMENTS"
         "="
-        "+="
-        "-="   # Also used for "−="
-        "*="
-        "/="
-        "//="
-        "|="
-        "^="
-        "÷="
-        "%="
-        "<<="
-        ">>="
-        ">>>="
-        "\\="
-        "&="
+        "op="  # Updating assignment operator ( $= %= &= *= += -= //= /= <<= >>= >>>= \= ^= |= ÷= ⊻= )
         ":="
+        "END_SYNTACTIC_ASSIGNMENTS"
         "~"
-        "\$="
-        "⊻="
         "≔"
         "⩴"
         "≕"
@@ -296,6 +464,7 @@ const _kind_names =
         "↶"
         "↺"
         "↻"
+        "🢲"
     "END_ARROW"
 
     # Level 4
@@ -838,45 +1007,6 @@ const _kind_names =
     "END_UNICODE_OPS"
     "END_OPS"
 
-    # The following kinds are emitted by the parser. There's two types of these:
-
-    # 1. Implied tokens which have a position but might have zero width in the
-    #    source text.
-    #
-    # In some cases we want to generate parse tree nodes in a standard form,
-    # but some of the leaf tokens are implied rather than existing in the
-    # source text, or the lexed tokens need to be re-kinded to represent
-    # special forms which only the parser can infer. These are "parser tokens".
-    #
-    # Some examples:
-    #
-    # Docstrings - the macro name is invisible
-    #   "doc" foo() = 1   ==>  (macrocall (core @doc) . (= (call foo) 1))
-    #
-    # String macros - the macro name does not appear in the source text, so we
-    # need a special kind of token to imply it.
-    #
-    # In these cases, we use some special kinds which can be emitted as zero
-    # width tokens to keep the parse tree more uniform.
-    "BEGIN_PARSER_TOKENS"
-
-        "TOMBSTONE" # Empty placeholder for kind to be filled later
-
-        # Macro names are modelled as a special kind of identifier because the
-        # @ may not be attached to the macro name in the source (or may not be
-        # associated with a token at all in the case of implied macro calls
-        # like CORE_DOC_MACRO_NAME)
-        "BEGIN_MACRO_NAMES"
-            "MacroName"
-            "StringMacroName"
-            "CmdMacroName"
-            "core_@cmd"
-            "core_@int128_str"
-            "core_@uint128_str"
-            "core_@big_str"
-        "END_MACRO_NAMES"
-    "END_PARSER_TOKENS"
-
     # 2. Nonterminals which are exposed in the AST, but where the surface
     #    syntax doesn't have a token corresponding to the node type.
     "BEGIN_SYNTAX_KINDS"
@@ -912,127 +1042,38 @@ const _kind_names =
         # Comprehensions
         "generator"
         "filter"
-        "cartesian_iterator"
+        "iteration"
         "comprehension"
         "typed_comprehension"
         # Container for a single statement/atom plus any trivia and errors
         "wrapper"
     "END_SYNTAX_KINDS"
-]
 
-"""
-    K"name"
-    Kind(namestr)
+    # Special tokens
+    "TOMBSTONE"    # Empty placeholder for kind to be filled later
+    "None"         # Never emitted by lexer/parser
+    "EndMarker"    # EOF
 
-`Kind` is a type tag for specifying the type of tokens and interior nodes of
-a syntax tree. Abstractly, this tag is used to define our own *sum types* for
-syntax tree nodes. We do this explicitly outside the Julia type system because
-(a) Julia doesn't have sum types and (b) we want concrete data structures which
-are unityped from the Julia compiler's point of view, for efficiency.
-
-Naming rules:
-* Kinds which correspond to exactly one textural form are represented with that
-  text. This includes keywords like K"for" and operators like K"*".
-* Kinds which represent many textural forms have UpperCamelCase names. This
-  includes kinds like K"Identifier" and K"Comment".
-* Kinds which exist merely as delimiters are all uppercase
-"""
-primitive type Kind 16 end
-
-# The implementation of Kind here is basically similar to @enum. However we use
-# the K_str macro to self-name these kinds with their literal representation,
-# rather than needing to invent a new name for each.
-
-let kind_int_type = :UInt16
-    # Preprocess _kind_names to conflate category markers with the first/last
-    # in the category.
-    kindstr_to_int = Dict{String,UInt16}()
-    i = 1
-    while i <= length(_kind_names)
-        kn = _kind_names[i]
-        kind_int = i-1
-        if startswith(kn, "BEGIN_")
-            deleteat!(_kind_names, i)
-        elseif startswith(kn, "END_")
-            kind_int = i-2
-            deleteat!(_kind_names, i)
-        else
-            i += 1
-        end
-        push!(kindstr_to_int, kn=>kind_int)
-    end
-
-    max_kind_int = length(_kind_names)-1
-
-    @eval begin
-        function Kind(x::Integer)
-            if x < 0 || x > $max_kind_int
-                throw(ArgumentError("Kind out of range: $x"))
-            end
-            return Base.bitcast(Kind, convert($kind_int_type, x))
-        end
-
-        Base.convert(::Type{String}, k::Kind) = _kind_names[1 + reinterpret($kind_int_type, k)]
-
-        let kindstr_to_int=$kindstr_to_int
-            function Base.convert(::Type{Kind}, s::AbstractString)
-                i = get(kindstr_to_int, s) do
-                    error("unknown Kind name $(repr(s))")
-                end
-                Kind(i)
-            end
-        end
-
-        Base.string(x::Kind) = convert(String, x)
-        Base.print(io::IO, x::Kind) = print(io, convert(String, x))
-
-        Base.typemin(::Type{Kind}) = Kind(0)
-        Base.typemax(::Type{Kind}) = Kind($max_kind_int)
-
-        Base.:<(x::Kind, y::Kind) = reinterpret($kind_int_type, x) < reinterpret($kind_int_type, y)
-
-        Base.instances(::Type{Kind}) = (Kind(i) for i in reinterpret($kind_int_type, typemin(Kind)):reinterpret($kind_int_type, typemax(Kind)))
-    end
-end
-
-function Base.show(io::IO, k::Kind)
-    print(io, "K\"$(convert(String, k))\"")
-end
-
-#-------------------------------------------------------------------------------
-
-"""
-    K"s"
-
-The kind of a token or AST internal node with string "s".
-
-For example
-* K")" is the kind of the right parenthesis token
-* K"block" is the kind of a block of code (eg, statements within a begin-end).
-"""
-macro K_str(s)
-    convert(Kind, s)
-end
-
-"""
-A set of kinds which can be used with the `in` operator.  For example
-
-    k in KSet"+ - *"
-"""
-macro KSet_str(str)
-    kinds = [convert(Kind, s) for s in split(str)]
-
-    quote
-        ($(kinds...),)
-    end
-end
-
-"""
-    kind(x)
-
-Return the `Kind` of `x`.
-"""
-kind(k::Kind) = k
+    "BEGIN_ERRORS"
+        # Tokenization errors
+        "ErrorEofMultiComment"
+        "ErrorInvalidNumericConstant"
+        "ErrorHexFloatMustContainP"
+        "ErrorAmbiguousNumericConstant"
+        "ErrorAmbiguousNumericDotMultiply"
+        "ErrorInvalidInterpolationTerminator"
+        "ErrorNumericOverflow"
+        "ErrorInvalidEscapeSequence"
+        "ErrorOverLongCharacter"
+        "ErrorInvalidUTF8"
+        "ErrorInvisibleChar"
+        "ErrorIdentifierStart"
+        "ErrorUnknownCharacter"
+        "ErrorBidiFormatting"
+        # Generic error
+        "error"
+    "END_ERRORS"
+])
 
 #-------------------------------------------------------------------------------
 const _nonunique_kind_names = Set([
@@ -1040,6 +1081,7 @@ const _nonunique_kind_names = Set([
     K"Whitespace"
     K"NewlineWs"
     K"Identifier"
+    K"Placeholder"
 
     K"ErrorEofMultiComment"
     K"ErrorInvalidNumericConstant"
@@ -1056,6 +1098,7 @@ const _nonunique_kind_names = Set([
     K"ErrorBidiFormatting"
     K"ErrorInvalidOperator"
 
+    K"Bool"
     K"Integer"
     K"BinInt"
     K"HexInt"
@@ -1085,7 +1128,7 @@ function untokenize(k::Kind; unique=true)
     if unique && k in _nonunique_kind_names
         return nothing
     else
-        return convert(String, k)
+        return string(k)
     end
 end
 
@@ -1102,6 +1145,7 @@ const _token_error_descriptions = Dict{Kind, String}(
     K"ErrorOverLongCharacter"=>"character literal contains multiple characters",
     K"ErrorInvalidUTF8"=>"invalid UTF-8 sequence",
     K"ErrorInvisibleChar"=>"invisible character",
+    K"ErrorIdentifierStart" => "identifier cannot begin with character",
     K"ErrorUnknownCharacter"=>"unknown unicode character",
     K"ErrorBidiFormatting"=>"unbalanced bidirectional unicode formatting",
     K"ErrorInvalidOperator" => "invalid operator",
@@ -1111,21 +1155,24 @@ const _token_error_descriptions = Dict{Kind, String}(
 
 #-------------------------------------------------------------------------------
 # Predicates
+is_identifier(k::Kind) = K"BEGIN_IDENTIFIERS" <= k <= K"END_IDENTIFIERS"
 is_contextual_keyword(k::Kind) = K"BEGIN_CONTEXTUAL_KEYWORDS" <= k <= K"END_CONTEXTUAL_KEYWORDS"
 is_error(k::Kind) = K"BEGIN_ERRORS" <= k <= K"END_ERRORS" || k == K"ErrorInvalidOperator" || k == K"Error**"
 is_keyword(k::Kind) = K"BEGIN_KEYWORDS" <= k <= K"END_KEYWORDS"
 is_block_continuation_keyword(k::Kind) = K"BEGIN_BLOCK_CONTINUATION_KEYWORDS" <= k <= K"END_BLOCK_CONTINUATION_KEYWORDS"
 is_literal(k::Kind) = K"BEGIN_LITERAL" <= k <= K"END_LITERAL"
+is_number(k::Kind)  = K"BEGIN_NUMBERS" <= k <= K"END_NUMBERS"
 is_operator(k::Kind) = K"BEGIN_OPS" <= k <= K"END_OPS"
 is_word_operator(k::Kind) = (k == K"in" || k == K"isa" || k == K"where")
 
-is_contextual_keyword(k) = is_contextual_keyword(kind(k))
-is_error(k) = is_error(kind(k))
-is_keyword(k) = is_keyword(kind(k))
-is_literal(k) = is_literal(kind(k))
-is_operator(k) = is_operator(kind(k))
-is_word_operator(k) = is_word_operator(kind(k))
-
+is_identifier(x) = is_identifier(kind(x))
+is_contextual_keyword(x) = is_contextual_keyword(kind(x))
+is_error(x) = is_error(kind(x))
+is_keyword(x) = is_keyword(kind(x))
+is_literal(x) = is_literal(kind(x))
+is_number(x)  = is_number(kind(x))
+is_operator(x) = is_operator(kind(x))
+is_word_operator(x) = is_word_operator(kind(x))
 
 # Predicates for operator precedence
 # FIXME: Review how precedence depends on dottedness, eg
@@ -1152,10 +1199,7 @@ is_prec_pipe_lt(x)     = kind(x) == K"<|"
 is_prec_pipe_gt(x)     = kind(x) == K"|>"
 is_syntax_kind(x)      = K"BEGIN_SYNTAX_KINDS"<= kind(x) <= K"END_SYNTAX_KINDS"
 is_macro_name(x)       = K"BEGIN_MACRO_NAMES" <= kind(x) <= K"END_MACRO_NAMES"
-
-function is_number(x)
-    kind(x) in (K"Integer", K"BinInt", K"HexInt", K"OctInt", K"Float", K"Float32")
-end
+is_syntactic_assignment(x) = K"BEGIN_SYNTACTIC_ASSIGNMENTS" <= kind(x) <= K"END_SYNTACTIC_ASSIGNMENTS"
 
 function is_string_delim(x)
     kind(x) in (K"\"", K"\"\"\"")
@@ -1171,4 +1215,13 @@ Return true if `x` has whitespace or comment kind
 function is_whitespace(x)
     k = kind(x)
     return k == K"Whitespace" || k == K"NewlineWs" || k == K"Comment"
+end
+
+function is_syntactic_operator(x)
+    k = kind(x)
+    # TODO: Do we need to disallow dotted and suffixed forms when this is used
+    # in the parser? The lexer itself usually disallows such tokens, so it's
+    # not clear whether we need to handle them. (Though note `.->` is a
+    # token...)
+    return k in KSet"&& || . ... ->" || is_syntactic_assignment(k)
 end

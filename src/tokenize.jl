@@ -5,7 +5,7 @@ export tokenize, untokenize
 using ..JuliaSyntax: JuliaSyntax, Kind, @K_str, @KSet_str
 
 import ..JuliaSyntax: kind,
-    is_literal, is_error, is_contextual_keyword, is_word_operator
+    is_literal, is_contextual_keyword, is_word_operator
 
 #-------------------------------------------------------------------------------
 # Character-based predicates for tokenization
@@ -22,6 +22,7 @@ end
 function is_identifier_start_char(c::Char)
     c == EOF_CHAR && return false
     isvalid(c) || return false
+    c == '🢲' && return false  # First divergence from Base.is_id_start_char
     return Base.is_id_start_char(c)
 end
 
@@ -93,6 +94,7 @@ function _nondot_symbolic_operator_kinds()
         K"isa"
         K"in"
         K".'"
+        K"op="
     ])
 end
 
@@ -527,19 +529,20 @@ function _next_token(l::Lexer, c)
     elseif c == '-'
         return lex_minus(l);
     elseif c == '−' # \minus '−' treated as hyphen '-'
-        return emit(l, accept(l, '=') ? K"-=" : K"-")
+        return emit(l, accept(l, '=') ? K"op=" : K"-")
     elseif c == '`'
         return lex_backtick(l);
     elseif is_identifier_start_char(c)
         return lex_identifier(l, c)
     elseif isdigit(c)
         return lex_digit(l, K"Integer")
-    elseif (k = get(_unicode_ops, c, K"error")) != K"error"
+    elseif (k = get(_unicode_ops, c, K"None")) != K"None"
         return emit(l, k)
     else
         emit(l,
-            !isvalid(c)          ? K"ErrorInvalidUTF8"   :
-            is_invisible_char(c) ? K"ErrorInvisibleChar" :
+            !isvalid(c)           ? K"ErrorInvalidUTF8"   :
+            is_invisible_char(c)  ? K"ErrorInvisibleChar" :
+            is_identifier_char(c) ? K"ErrorIdentifierStart" :
             K"ErrorUnknownCharacter")
     end
 end
@@ -733,9 +736,10 @@ function lex_whitespace(l::Lexer, c)
         if c == '\n'
             k = K"NewlineWs"
         end
-        pc = peekchar(l)
+        pc, ppc = dpeekchar(l)
         # stop on non whitespace and limit to a single newline in a token
-        if !iswhitespace(pc) || (k == K"NewlineWs" && pc == '\n')
+        if !iswhitespace(pc) ||
+                (k == K"NewlineWs" && (pc == '\n' || (pc == '\r' && ppc == '\n')))
             break
         end
         c = readchar(l)
@@ -747,8 +751,8 @@ function lex_comment(l::Lexer)
     if peekchar(l) != '='
         valid = true
         while true
-            pc = peekchar(l)
-            if pc == '\n' || pc == EOF_CHAR
+            pc, ppc = dpeekchar(l)
+            if pc == '\n' || (pc == '\r' && ppc == '\n') || pc == EOF_CHAR
                 return emit(l, valid ? K"Comment" : K"ErrorInvalidUTF8")
             end
             valid &= isvalid(pc)
@@ -795,12 +799,12 @@ function lex_greater(l::Lexer)
     if accept(l, '>')
         if accept(l, '>')
             if accept(l, '=')
-                return emit(l, K">>>=")
+                return emit(l, K"op=")
             else # >>>?, ? not a =
                 return emit(l, K">>>")
             end
         elseif accept(l, '=')
-            return emit(l, K">>=")
+            return emit(l, K"op=")
         else
             return emit(l, K">>")
         end
@@ -817,7 +821,7 @@ end
 function lex_less(l::Lexer)
     if accept(l, '<')
         if accept(l, '=')
-            return emit(l, K"<<=")
+            return emit(l, K"op=")
         else # '<<?', ? not =, ' '
             return emit(l, K"<<")
         end
@@ -886,7 +890,7 @@ end
 
 function lex_percent(l::Lexer)
     if accept(l, '=')
-        return emit(l, K"%=")
+        return emit(l, K"op=")
     else
         return emit(l, K"%")
     end
@@ -894,7 +898,7 @@ end
 
 function lex_bar(l::Lexer)
     if accept(l, '=')
-        return emit(l, K"|=")
+        return emit(l, K"op=")
     elseif accept(l, '>')
         return emit(l, K"|>")
     elseif accept(l, '|')
@@ -908,7 +912,7 @@ function lex_plus(l::Lexer)
     if accept(l, '+')
         return emit(l, K"++")
     elseif accept(l, '=')
-        return emit(l, K"+=")
+        return emit(l, K"op=")
     end
     return emit(l, K"+")
 end
@@ -923,7 +927,7 @@ function lex_minus(l::Lexer)
     elseif !l.dotop && accept(l, '>')
         return emit(l, K"->")
     elseif accept(l, '=')
-        return emit(l, K"-=")
+        return emit(l, K"op=")
     end
     return emit(l, K"-")
 end
@@ -932,35 +936,35 @@ function lex_star(l::Lexer)
     if accept(l, '*')
         return emit(l, K"Error**") # "**" is an invalid operator use ^
     elseif accept(l, '=')
-        return emit(l, K"*=")
+        return emit(l, K"op=")
     end
     return emit(l, K"*")
 end
 
 function lex_circumflex(l::Lexer)
     if accept(l, '=')
-        return emit(l, K"^=")
+        return emit(l, K"op=")
     end
     return emit(l, K"^")
 end
 
 function lex_division(l::Lexer)
     if accept(l, '=')
-        return emit(l, K"÷=")
+        return emit(l, K"op=")
     end
     return emit(l, K"÷")
 end
 
 function lex_dollar(l::Lexer)
     if accept(l, '=')
-        return emit(l, K"$=")
+        return emit(l, K"op=")
     end
     return emit(l, K"$")
 end
 
 function lex_xor(l::Lexer)
     if accept(l, '=')
-        return emit(l, K"⊻=")
+        return emit(l, K"op=")
     end
     return emit(l, K"⊻")
 end
@@ -1108,7 +1112,7 @@ function lex_amper(l::Lexer)
     if accept(l, '&')
         return emit(l, K"&&")
     elseif accept(l, '=')
-        return emit(l, K"&=")
+        return emit(l, K"op=")
     else
         return emit(l, K"&")
     end
@@ -1146,12 +1150,12 @@ end
 function lex_forwardslash(l::Lexer)
     if accept(l, '/')
         if accept(l, '=')
-            return emit(l, K"//=")
+            return emit(l, K"op=")
         else
             return emit(l, K"//")
         end
     elseif accept(l, '=')
-        return emit(l, K"/=")
+        return emit(l, K"op=")
     else
         return emit(l, K"/")
     end
@@ -1159,7 +1163,7 @@ end
 
 function lex_backslash(l::Lexer)
     if accept(l, '=')
-        return emit(l, K"\=")
+        return emit(l, K"op=")
     end
     return emit(l, K"\\")
 end
@@ -1191,7 +1195,7 @@ function lex_dot(l::Lexer)
         elseif pc == '−'
             l.dotop = true
             readchar(l)
-            return emit(l, accept(l, '=') ? K"-=" : K"-")
+            return emit(l, accept(l, '=') ? K"op=" : K"-")
         elseif pc =='*'
             l.dotop = true
             readchar(l)
@@ -1220,7 +1224,7 @@ function lex_dot(l::Lexer)
             l.dotop = true
             readchar(l)
             if accept(l, '=')
-                return emit(l, K"&=")
+                return emit(l, K"op=")
             else
                 if accept(l, '&')
                     return emit(l, K"&&")
@@ -1317,8 +1321,10 @@ function lex_identifier(l::Lexer, c)
 
     if n > MAX_KW_LENGTH
         emit(l, K"Identifier")
+    elseif h == _true_hash || h == _false_hash
+        emit(l, K"Bool")
     else
-        emit(l, get(kw_hash, h, K"Identifier"))
+        emit(l, get(_kw_hash, h, K"Identifier"))
     end
 end
 
@@ -1372,8 +1378,6 @@ K"while",
 K"in",
 K"isa",
 K"where",
-K"true",
-K"false",
 
 K"abstract",
 K"as",
@@ -1385,6 +1389,8 @@ K"type",
 K"var",
 ]
 
-const kw_hash = Dict(simple_hash(lowercase(string(kw))) => kw for kw in kws)
+const _true_hash = simple_hash("true")
+const _false_hash = simple_hash("false")
+const _kw_hash = Dict(simple_hash(lowercase(string(kw))) => kw for kw in kws)
 
 end # module

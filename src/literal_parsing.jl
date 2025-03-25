@@ -406,10 +406,8 @@ function parse_julia_literal(txtbuf::Vector{UInt8}, head::SyntaxHead, srcrange)
                                               last(srcrange)+1, Diagnostic[])
         end
         return had_error ? ErrorVal() : String(take!(io))
-    elseif k == K"true"
-        return true
-    elseif k == K"false"
-        return false
+    elseif k == K"Bool"
+        return txtbuf[first(srcrange)] == u8"t"
     end
 
     # TODO: Avoid allocating temporary String here
@@ -418,7 +416,7 @@ function parse_julia_literal(txtbuf::Vector{UInt8}, head::SyntaxHead, srcrange)
         parse_int_literal(val_str)
     elseif k in KSet"BinInt OctInt HexInt"
         parse_uint_literal(val_str, k)
-    elseif k == K"Identifier"
+    elseif k == K"Identifier" || k == K"Placeholder"
         if has_flags(head, RAW_STRING_FLAG)
             io = IOBuffer()
             unescape_raw_string(io, txtbuf, first(srcrange), last(srcrange)+1, false)
@@ -438,8 +436,6 @@ function parse_julia_literal(txtbuf::Vector{UInt8}, head::SyntaxHead, srcrange)
         Symbol("@$(normalize_identifier(val_str))_str")
     elseif k == K"CmdMacroName"
         Symbol("@$(normalize_identifier(val_str))_cmd")
-    elseif k == K"core_@cmd"
-        Symbol("core_@cmd")
     elseif is_syntax_kind(head)
         nothing
     elseif is_keyword(k)

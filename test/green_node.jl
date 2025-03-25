@@ -2,16 +2,25 @@
     t = parsestmt(GreenNode, "aa + b")
 
     @test span(t) == 6
-    @test haschildren(t)
+    @test !is_leaf(t)
     @test head(t) == SyntaxHead(K"call", 0x0008)
     @test span.(children(t)) == [2,1,1,1,1]
     @test head.(children(t)) == [
          SyntaxHead(K"Identifier", 0x0000)
          SyntaxHead(K"Whitespace", 0x0001)
-         SyntaxHead(K"+", 0x0000)
+         SyntaxHead(K"Identifier", 0x0000)
          SyntaxHead(K"Whitespace", 0x0001)
          SyntaxHead(K"Identifier", 0x0000)
     ]
+
+    @test numchildren(t) == 5
+    @test !is_leaf(t)
+    @test is_leaf(t[1])
+
+    @test t[1] === children(t)[1]
+    @test t[2:4] == [t[2],t[3],t[4]]
+    @test firstindex(t) == 1
+    @test lastindex(t) == 5
 
     t2 = parsestmt(GreenNode, "aa + b")
     @test t == t2

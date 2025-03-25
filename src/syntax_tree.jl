@@ -17,6 +17,12 @@ mutable struct TreeNode{NodeData}   # ? prevent others from using this with Node
     end
 end
 
+# Exclude parent from hash and equality checks. This means that subtrees can compare equal.
+Base.hash(node::TreeNode, h::UInt) = hash((node.children, node.data), h)
+function Base.:(==)(a::TreeNode{T}, b::TreeNode{T}) where T
+    a.children == b.children && a.data == b.data
+end
+
 # Implement "pass-through" semantics for field access: access fields of `data`
 # as if they were part of `TreeNode`
 function Base.getproperty(node::TreeNode, name::Symbol)
@@ -44,6 +50,11 @@ struct SyntaxData <: AbstractSyntaxData
     val::Any
 end
 
+Base.hash(data::SyntaxData, h::UInt) = hash((data.source, data.raw, data.position, data.val), h)
+function Base.:(==)(a::SyntaxData, b::SyntaxData)
+    a.source == b.source && a.raw == b.raw && a.position == b.position && a.val == b.val
+end
+
 """
     SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead};
                keep_parens=false, position::Integer=1)
@@ -65,7 +76,7 @@ end
 function _to_SyntaxNode(source::SourceFile, txtbuf::Vector{UInt8}, offset::Int,
                         raw::GreenNode{SyntaxHead},
                         position::Int, keep_parens::Bool)
-    if !haschildren(raw)
+    if is_leaf(raw)
         # Here we parse the values eagerly rather than representing them as
         # strings. Maybe this is good. Maybe not.
         valrange = position:position + span(raw) - 1
@@ -95,9 +106,36 @@ function _to_SyntaxNode(source::SourceFile, txtbuf::Vector{UInt8}, offset::Int,
     end
 end
 
-haschildren(node::TreeNode) = node.children !== nothing
-children(node::TreeNode) = (c = node.children; return c === nothing ? () : c)
+"""
+    is_leaf(node)
 
+Determine whether the node is a leaf of the tree. In our trees a "leaf"
+corresponds to a single token in the source text.
+"""
+is_leaf(node::TreeNode) = node.children === nothing
+
+"""
+    children(node)
+
+Return an iterable list of children for the node. For leaves, return `nothing`.
+"""
+children(node::TreeNode) = node.children
+
+"""
+    numchildren(node)
+
+Return `length(children(node))` but possibly computed in a more efficient way.
+"""
+numchildren(node::TreeNode) = (isnothing(node.children) ? 0 : length(node.children))
+
+Base.getindex(node::AbstractSyntaxNode, i::Int) = children(node)[i]
+Base.getindex(node::AbstractSyntaxNode, rng::UnitRange) = view(children(node), rng)
+Base.firstindex(node::AbstractSyntaxNode) = 1
+Base.lastindex(node::AbstractSyntaxNode) = length(children(node))
+
+function Base.setindex!(node::SN, x::SN, i::Int) where {SN<:AbstractSyntaxNode}
+    children(node)[i] = x
+end
 
 """
     head(x)
@@ -109,92 +147,92 @@ head(node::AbstractSyntaxNode) = head(node.raw)
 
 span(node::AbstractSyntaxNode) = span(node.raw)
 
-first_byte(node::AbstractSyntaxNode) = node.position
-last_byte(node::AbstractSyntaxNode)  = node.position + span(node) - 1
+byte_range(node::AbstractSyntaxNode) = node.position:(node.position + span(node) - 1)
 
-"""
-    sourcetext(node)
+sourcefile(node::AbstractSyntaxNode) = node.source
 
-Get the full source text of a node.
-"""
-function sourcetext(node::AbstractSyntaxNode)
-    view(node.source, range(node))
-end
-
-function Base.range(node::AbstractSyntaxNode)
-    (node.position-1) .+ (1:span(node))
-end
-
-source_line(node::AbstractSyntaxNode) = source_line(node.source, node.position)
-source_location(node::AbstractSyntaxNode) = source_location(node.source, node.position)
-
-function interpolate_literal(node::SyntaxNode, val)
-    @assert kind(node) == K"$"
-    SyntaxNode(node.source, node.raw, node.position, node.parent, true, val)
+function leaf_string(ex)
+    if !is_leaf(ex)
+        throw(ArgumentError("_value_string should be used for leaf nodes only"))
+    end
+    k = kind(ex)
+    value = ex.val
+    # TODO: Dispatch on kind extension module (??)
+    return k == K"Placeholder" ? "□"*string(value) :
+           is_identifier(k)    ? string(value)     :
+           value isa Symbol    ? string(value)     : # see parse_julia_literal for other cases which go here
+           repr(value)
 end
 
 function _show_syntax_node(io, current_filename, node::AbstractSyntaxNode,
-                           indent, show_byte_offsets)
-    fname = node.source.filename
-    line, col = source_location(node.source, node.position)
-    posstr = "$(lpad(line, 4)):$(rpad(col,3))│"
-    if show_byte_offsets
-        posstr *= "$(lpad(first_byte(node),6)):$(rpad(last_byte(node),6))│"
+                           indent, show_location, show_kind)
+    line, col = source_location(node)
+    if show_location
+        fname = filename(node)
+        # Add filename if it's changed from the previous node
+        if fname != current_filename[]
+            println(io, indent, " -file- │ ", repr(fname))
+            current_filename[] = fname
+        end
+        posstr = "$(lpad(line, 4)):$(rpad(col,3))│$(lpad(first_byte(node),6)):$(rpad(last_byte(node),6))│"
+    else
+        posstr = ""
     end
     val = node.val
-    nodestr = haschildren(node) ? "[$(untokenize(head(node)))]" :
-              isa(val, Symbol) ? string(val) : repr(val)
+    nodestr = is_leaf(node) ? leaf_string(node) : "[$(untokenize(head(node)))]"
     treestr = string(indent, nodestr)
-    # Add filename if it's changed from the previous node
-    if fname != current_filename[]
-        #println(io, "# ", fname)
-        treestr = string(rpad(treestr, 40), "│$fname")
-        current_filename[] = fname
+    if show_kind && is_leaf(node)
+        treestr = rpad(treestr, 40)*" :: "*string(kind(node))
     end
     println(io, posstr, treestr)
-    if haschildren(node)
+    if !is_leaf(node)
         new_indent = indent*"  "
         for n in children(node)
-            _show_syntax_node(io, current_filename, n, new_indent, show_byte_offsets)
+            _show_syntax_node(io, current_filename, n, new_indent, show_location, show_kind)
         end
     end
 end
 
-function _show_syntax_node_sexpr(io, node::AbstractSyntaxNode)
-    if !haschildren(node)
+function _show_syntax_node_sexpr(io, node::AbstractSyntaxNode, show_kind)
+    if is_leaf(node)
         if is_error(node)
             print(io, "(", untokenize(head(node)), ")")
         else
-            val = node.val
-            print(io, val isa Symbol ? string(val) : repr(val))
+            print(io, leaf_string(node))
+            if show_kind
+                print(io, "::", kind(node))
+            end
         end
     else
         print(io, "(", untokenize(head(node)))
         first = true
         for n in children(node)
             print(io, ' ')
-            _show_syntax_node_sexpr(io, n)
+            _show_syntax_node_sexpr(io, n, show_kind)
             first = false
         end
         print(io, ')')
     end
 end
 
-function Base.show(io::IO, ::MIME"text/plain", node::AbstractSyntaxNode; show_byte_offsets=false)
-    println(io, "line:col│$(show_byte_offsets ? " byte_range  │" : "") tree                                   │ file_name")
-    _show_syntax_node(io, Ref{Union{Nothing,String}}(nothing), node, "", show_byte_offsets)
+function Base.show(io::IO, ::MIME"text/plain", node::AbstractSyntaxNode; show_location=false, show_kind=true)
+    println(io, "SyntaxNode:")
+    if show_location
+        println(io, "line:col│ byte_range  │ tree")
+    end
+    _show_syntax_node(io, Ref(""), node, "", show_location, show_kind)
 end
 
-function Base.show(io::IO, ::MIME"text/x.sexpression", node::AbstractSyntaxNode)
-    _show_syntax_node_sexpr(io, node)
+function Base.show(io::IO, ::MIME"text/x.sexpression", node::AbstractSyntaxNode; show_kind=false)
+    _show_syntax_node_sexpr(io, node, show_kind)
 end
 
 function Base.show(io::IO, node::AbstractSyntaxNode)
-    _show_syntax_node_sexpr(io, node)
+    _show_syntax_node_sexpr(io, node, false)
 end
 
 function Base.push!(node::SN, child::SN) where SN<:AbstractSyntaxNode
-    if !haschildren(node)
+    if is_leaf(node)
         error("Cannot add children")
     end
     args = children(node)
@@ -204,11 +242,13 @@ end
 function Base.copy(node::TreeNode)
     # copy the container but not the data (ie, deep copy the tree, shallow copy the data). copy(::Expr) is similar
     # copy "un-parents" the top-level `node` that you're copying
-    newnode = typeof(node)(nothing, haschildren(node) ? typeof(node)[] : nothing, copy(node.data))
-    for child in children(node)
-        newchild = copy(child)
-        newchild.parent = newnode
-        push!(newnode, newchild)
+    newnode = typeof(node)(nothing, is_leaf(node) ? nothing : typeof(node)[], copy(node.data))
+    if !is_leaf(node)
+        for child in children(node)
+            newchild = copy(child)
+            newchild.parent = newnode
+            push!(newnode, newchild)
+        end
     end
     return newnode
 end
@@ -223,75 +263,4 @@ function build_tree(::Type{SyntaxNode}, stream::ParseStream;
     SyntaxNode(source, green_tree, position=first_byte(stream), keep_parens=keep_parens)
 end
 
-#-------------------------------------------------------------------------------
-# Tree utilities
-
-"""
-    child(node, i1, i2, ...)
-
-Get child at a tree path. If indexing accessed children, it would be
-`node[i1][i2][...]`
-"""
-function child(node, path::Integer...)
-    n = node
-    for index in path
-        n = children(n)[index]
-    end
-    return n
-end
-
-function setchild!(node::SyntaxNode, path, x)
-    n1 = child(node, path[1:end-1]...)
-    n1.children[path[end]] = x
-end
-
-# We can overload multidimensional Base.getindex / Base.setindex! for node
-# types.
-#
-# The justification for this is to view a tree as a multidimensional ragged
-# array, where descending depthwise into the tree corresponds to dimensions of
-# the array.
-#
-# However... this analogy is only good for complete trees at a given depth (=
-# dimension). But the syntax is oh-so-handy!
-function Base.getindex(node::Union{SyntaxNode,GreenNode}, path::Int...)
-    child(node, path...)
-end
-function Base.lastindex(node::Union{SyntaxNode,GreenNode})
-    length(children(node))
-end
-
-function Base.setindex!(node::SyntaxNode, x::SyntaxNode, path::Int...)
-    setchild!(node, path, x)
-end
-
-"""
-Get absolute position and span of the child of `node` at the given tree `path`.
-"""
-function child_position_span(node::GreenNode, path::Int...)
-    n = node
-    p = 1
-    for index in path
-        cs = children(n)
-        for i = 1:index-1
-            p += span(cs[i])
-        end
-        n = cs[index]
-    end
-    return n, p, n.span
-end
-
-function child_position_span(node::SyntaxNode, path::Int...)
-    n = child(node, path...)
-    n, n.position, span(n)
-end
-
-function highlight(io::IO, node::SyntaxNode; kws...)
-    highlight(io, node.source, range(node); kws...)
-end
-
-function highlight(io::IO, source::SourceFile, node::GreenNode, path::Int...; kws...)
-    _, p, span = child_position_span(node, path...)
-    q = p + span - 1
-    highlight(io, source, p:q; kws...)
-end
+@deprecate haschildren(x) !is_leaf(x) false
