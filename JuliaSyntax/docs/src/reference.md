@@ -48,6 +48,7 @@ the source text more closely.
 * Docstrings use the `K"doc"` kind, and are not lowered to `Core.@doc` until later (#217)
 * Juxtaposition uses the `K"juxtapose"` kind rather than lowering immediately to `*` (#220)
 * `return` without a value has zero children, rather than lowering to `return nothing` (#220)
+* Command syntax `` `foo` `` parses into a `cmdstring` tree node wrapping the string, as `(cmdstring "foo")` (#438). These are lowered to a macro call later rather than by the parser.
 
 ### Containers for string-like constructs
 
@@ -69,14 +70,17 @@ class of tokenization errors and lets the parser deal with them.
 * Standalone dotted operators are always parsed as `(. op)`. For example `.*(x,y)` is parsed as `(call (. *) x y)` (#240)
 * The `K"="` kind is used for keyword syntax rather than `kw`, to avoid various inconsistencies and ambiguities (#103)
 * Unadorned postfix adjoint is parsed as `call` rather than as a syntactic operator for consistency with suffixed versions like `x'ᵀ` (#124)
+* The argument list in the left hand side of `->` is always a tuple. For example, `x->y` parses as `(-> (tuple x) y)` rather than `(-> x y)` (#522)
 
 ### Improvements to awkward AST forms
 
-* Frakentuples with multiple parameter blocks like `(a=1, b=2; c=3; d=4)` are flattened into the parent tuple instead of using nested `K"parameters"` nodes (#133)
+* `FrankenTuple`s with multiple parameter blocks like `(a=1, b=2; c=3; d=4)` are flattened into the parent tuple instead of using nested `K"parameters"` nodes (#133)
 * Using `try catch else finally end` is parsed with `K"catch"` `K"else"` and `K"finally"` children to avoid the awkwardness of the optional child nodes in the `Expr` representation (#234)
 * The dotted import path syntax as in `import A.b.c` is parsed with a `K"importpath"` kind rather than `K"."`, because a bare `A.b.c` has a very different nested/quoted expression representation (#244)
 * We use flags rather than child nodes to represent the difference between `struct` and `mutable struct`, `module` and `baremodule` (#220)
-* Multiple iterations within the header of a `for`, as in `for a=as, b=bs body end` are represented with a `cartesian_iterator` head rather than a `block`, as these lists of iterators are neither semantically nor syntactically a sequence of statements. Unlike other uses of `block` (see also generators).
+* Iterations are represented with the `iteration` and `in` heads rather than `=` within the header of a `for`. Thus `for i=is ; body end` parses to `(for (iteration (in i is)) (block body))`. Cartesian iteration as in `for a=as, b=bs body end` are represented with a nested `(iteration (in a as) (in b bs))` rather than a `block` containing `=` because these lists of iterators are neither semantically nor syntactically a sequence of statements, unlike other uses of `block`. Generators also use the `iteration` head - see information on that below.
+* Short form functions like `f(x) = x + 1` are represented with the `function` head rather than the `=` head. In this case the `SHORT_FORM_FUNCTION_FLAG` flag is set to allow the surface syntactic form to be easily distinguished from long form functions.
+* All kinds of updating assignment operators like `+=` are represented with a single `K"op="` head, with the operator itself in infix position. For example, `x += 1` is `(op= x + 1)`, where the plus token is of kind `K"Identifer"`. This greatly reduces the number of distinct forms here from a rather big list (`$=` `%=` `&=` `*=` `+=` `-=` `//=` `/=` `<<=` `>>=` `>>>=` `\=` `^=` `|=` `÷=` `⊻=`) and makes the operator itself appear in the AST as kind `K"Identifier"`, as it should. It also makes it possible to add further unicode updating operators while keeping the AST stable.
 
 ## More detail on tree differences
 
@@ -90,8 +94,10 @@ mean
 
 ```
 for x in xs
-for y in ys
-  push!(xy, collection)
+    for y in ys
+        push!(xy, collection)
+    end
+end
 ```
 
 so the `xy` prefix is in the *body* of the innermost for loop. Following this,
@@ -112,8 +118,8 @@ source order.
 
 However, our green tree is strictly source-ordered, so we must deviate from the
 Julia AST. We deal with this by grouping cartesian products of iterators
-(separated by commas) within `cartesian_iterator` blocks as in `for` loops, and
-use the presence of multiple iterator blocks rather than the `flatten` head to
+(separated by commas) within `iteration` blocks as in `for` loops, and
+use the length of the `iteration` block rather than the `flatten` head to
 distinguish flattened iterators. The nested flattens and generators of `Expr`
 forms are reconstructed later. In this form the tree structure resembles the
 source much more closely. For example, `(xy for x in xs for y in ys)` is parsed as
@@ -121,8 +127,8 @@ source much more closely. For example, `(xy for x in xs for y in ys)` is parsed 
 ```
 (generator
   xy
-  (= x xs)
-  (= y ys))
+  (iteration (in x xs))
+  (iteration (in y ys)))
 ```
 
 And the cartesian iteration `(xy for x in xs, y in ys)` is parsed as
@@ -130,9 +136,7 @@ And the cartesian iteration `(xy for x in xs, y in ys)` is parsed as
 ```
 (generator
   xy
-  (cartesian_iterator
-    (= x xs)
-    (= y ys)))
+  (iteration (in x xs) (in y ys)))
 ```
 
 ### Whitespace trivia inside strings
@@ -252,7 +256,7 @@ stored in the head flags for `SyntaxNode` trees, and in the first `arg` for
 
 Vertical concatenation along dimension 1 can be done with semicolons or newlines
 
-```julia
+```julia-repl
 julia> print_tree(:([a
                      b]))
 Expr(:vcat)
@@ -269,7 +273,7 @@ Expr(:vcat)
 
 For horizontal concatenation along dimension 2, use spaces or double semicolons
 
-```julia
+```julia-repl
 julia> print_tree(:([a b]))
 Expr(:hcat)
 ├─ :a
@@ -287,7 +291,7 @@ Expr(:ncat)
 Concatenation along dimensions 1 and 2 can be done with spaces and single
 semicolons or newlines, producing a mixture of `vcat` and `row` expressions:
 
-```julia
+```julia-repl
 julia> print_tree(:([a b
                      c d]))
 # OR
@@ -304,7 +308,7 @@ Expr(:vcat)
 General n-dimensional concatenation results in nested `ncat` and `nrow`, for
 example
 
-```julia
+```julia-repl
 julia> print_tree(:([a ; b ;; c ; d ;;; x]))
 Expr(:ncat)
 ├─ 3

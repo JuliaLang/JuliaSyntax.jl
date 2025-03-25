@@ -7,7 +7,8 @@ using JuliaSyntax: ParseStream,
     peek, peek_token,
     bump, bump_trivia, bump_invisible,
     emit, emit_diagnostic, TRIVIA_FLAG, INFIX_FLAG,
-    ParseStreamPosition, first_child_position
+    ParseStreamPosition, first_child_position, last_child_position,
+    parsestmt
 
 # Here we manually issue parse events in the order the Julia parser would issue
 # them
@@ -110,27 +111,50 @@ end
     st = parse_sexpr("((a b) c)")
     child1_pos = first_child_position(st, position(st))
     @test child1_pos == ParseStreamPosition(7, 1)
-    child2_pos = first_child_position(st, child1_pos)
-    @test child2_pos == ParseStreamPosition(4, 0)
+    @test first_child_position(st, child1_pos) == ParseStreamPosition(4, 0)
+    @test last_child_position(st, position(st)) == ParseStreamPosition(9, 0)
+    @test last_child_position(st, child1_pos) == ParseStreamPosition(6, 0)
 
     st = parse_sexpr("( (a b) c)")
     child1_pos = first_child_position(st, position(st))
     @test child1_pos == ParseStreamPosition(8, 1)
-    child2_pos = first_child_position(st, child1_pos)
-    @test child2_pos == ParseStreamPosition(5, 0)
+    @test first_child_position(st, child1_pos) == ParseStreamPosition(5, 0)
+    @test last_child_position(st, position(st)) == ParseStreamPosition(10, 0)
+    @test last_child_position(st, child1_pos) == ParseStreamPosition(7, 0)
 
     st = parse_sexpr("(a (b c))")
     @test first_child_position(st, position(st)) == ParseStreamPosition(3, 0)
+    child2_pos = last_child_position(st, position(st))
+    @test child2_pos == ParseStreamPosition(9, 1)
+    @test first_child_position(st, child2_pos) == ParseStreamPosition(6, 0)
+    @test last_child_position(st, child2_pos) == ParseStreamPosition(8, 0)
 
     st = parse_sexpr("( a (b c))")
     @test first_child_position(st, position(st)) == ParseStreamPosition(4, 0)
+    child2_pos = last_child_position(st, position(st))
+    @test child2_pos == ParseStreamPosition(10, 1)
+    @test first_child_position(st, child2_pos) == ParseStreamPosition(7, 0)
+    @test last_child_position(st, child2_pos) == ParseStreamPosition(9, 0)
 
     st = parse_sexpr("a (b c)")
     @test first_child_position(st, position(st)) == ParseStreamPosition(5, 0)
+    @test last_child_position(st, position(st)) == ParseStreamPosition(7, 0)
 
     st = parse_sexpr("(a) (b c)")
     @test first_child_position(st, position(st)) == ParseStreamPosition(7, 0)
+    @test last_child_position(st, position(st)) == ParseStreamPosition(9, 0)
 
     st = parse_sexpr("(() ())")
     @test first_child_position(st, position(st)) == ParseStreamPosition(4, 1)
+    @test last_child_position(st, position(st)) == ParseStreamPosition(7, 2)
+end
+
+@testset "SubString{GenericString} (issue #505)" begin
+    x = Test.GenericString("1 2")
+    @test x == "1 2"
+    y = split(x)[1]
+    @test y == "1"
+    @test y isa SubString{GenericString}
+    @test ParseStream(y) isa ParseStream
+    @test parsestmt(Expr, y) == parsestmt(Expr, "1")
 end

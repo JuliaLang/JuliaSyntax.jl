@@ -19,6 +19,7 @@ end
         @test diagnostic("a$(c)b") ==
             Diagnostic(2, 1+sizeof(string(c)), :error, "invisible character $(repr(c))")
     end
+    @test diagnostic("₁") == Diagnostic(1, 3, :error, "identifier cannot begin with character '₁'")
     @test diagnostic(":⥻") == Diagnostic(2, 4, :error, "unknown unicode character '⥻'")
 
     @test diagnostic("\"X \u202a X\"") == Diagnostic(2, 8, :error, "unbalanced bidirectional unicode formatting \"X \\u202a X\"")
@@ -39,6 +40,9 @@ end
         Diagnostic(5, 5, :error, "whitespace not allowed between prefix function call and argument list")
     @test diagnostic("\n+ (x, y)") ==
         Diagnostic(3, 3, :error, "whitespace not allowed between prefix function call and argument list")
+
+    @test diagnostic("function (\$f) body end") ==
+        Diagnostic(10, 13, :error, "Ambiguous signature. Add a trailing comma if this is a 1-argument anonymous function; remove parentheses if this is a macro call acting as function signature.")
 
 	@test diagnostic("A.@B.x", only_first=true) ==
         Diagnostic(3, 4, :error, "`@` must appear on first or last macro name component")
@@ -124,12 +128,15 @@ end
         Diagnostic(9, 9, :warning, "space between dots in import path")
 	@test diagnostic("import A.:+") ==
         Diagnostic(10, 10, :warning, "quoting with `:` is not required here")
-    # No warning for import `:` symbol
+    # No warnings for imports of `:` and parenthesized `(..)`
     @test diagnostic("import A.:, :", allow_multiple=true) == []
+    @test diagnostic("import A: (..)", allow_multiple=true) == []
     @test diagnostic("import A.(:+)") ==
         Diagnostic(10, 13, :warning, "parentheses are not required here")
     @test diagnostic("export (x)") ==
         Diagnostic(8, 10, :warning, "parentheses are not required here")
+    @test diagnostic("import :A") ==
+        Diagnostic(8, 9, :error, "expected identifier")
     @test diagnostic("export :x") ==
         Diagnostic(8, 9, :error, "expected identifier")
     @test diagnostic("public = 4", version=v"1.11") ==

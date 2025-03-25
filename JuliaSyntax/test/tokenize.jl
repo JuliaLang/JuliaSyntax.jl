@@ -163,16 +163,27 @@ end
     @test untokenize(tok(str), str)==">>"
 end
 
+@testset "tokenize newlines" begin
+    n = "\n"
+    rn = "\r\n"
+    nl = K"NewlineWs"
+    for i in 0:5
+        j = 5 - i
+        @test toks(n^i * rn^j) == vcat(fill(n  => nl, i), fill(rn => nl, j))
+        @test toks(rn^i * n^j) == vcat(fill(rn => nl, i), fill(n  => nl, j))
+    end
+end
 
 @testset "test added operators" begin
-    @test tok("1+=2",  2).kind == K"+="
-    @test tok("1-=2",  2).kind == K"-="
+    @test tok("1+=2",  2).kind == K"op="
+    @test tok("1-=2",  2).kind == K"op="
+    @test tok("1*=2",  2).kind == K"op="
+    @test tok("1^=2",  2).kind == K"op="
+    @test tok("1÷=2",  2).kind == K"op="
+    @test tok("1\\=2", 2).kind == K"op="
+    @test tok("1\$=2", 2).kind == K"op="
+    @test tok("1⊻=2",  2).kind == K"op="
     @test tok("1:=2",  2).kind == K":="
-    @test tok("1*=2",  2).kind == K"*="
-    @test tok("1^=2",  2).kind == K"^="
-    @test tok("1÷=2",  2).kind == K"÷="
-    @test tok("1\\=2", 2).kind == K"\="
-    @test tok("1\$=2", 2).kind == K"$="
     @test tok("1-->2", 2).kind == K"-->"
     @test tok("1<--2", 2).kind == K"<--"
     @test tok("1<-->2", 2).kind == K"<-->"
@@ -188,9 +199,10 @@ end
 end
 
 @testset "tokenizing true/false literals" begin
-    @test tok("somtext true", 3).kind == K"true"
-    @test tok("somtext false", 3).kind == K"false"
+    @test tok("somtext true", 3).kind == K"Bool"
+    @test tok("somtext false", 3).kind == K"Bool"
     @test tok("somtext tr", 3).kind == K"Identifier"
+    @test tok("somtext truething", 3).kind == K"Identifier"
     @test tok("somtext falsething", 3).kind == K"Identifier"
 end
 
@@ -221,6 +233,8 @@ end
     @test toks("#=   #=   =#") == ["#=   #=   =#"=>K"ErrorEofMultiComment"]
     @test toks("#=#==#=#") == ["#=#==#=#"=>K"Comment"]
     @test toks("#=#==#=")  == ["#=#==#="=>K"ErrorEofMultiComment"]
+    # comment terminated by \r\n
+    @test toks("#\r\n") == ["#" => K"Comment", "\r\n" => K"NewlineWs"]
 end
 
 
@@ -321,16 +335,12 @@ end
                     "type",
                     "var"]
 
-        @test kind(tok(kw)) == convert(Kind, kw)
+        @test kind(tok(kw)) == Kind(kw)
     end
 end
 
 @testset "issue in PR #45" begin
     @test length(collect(tokenize("x)"))) == 3
-end
-
-@testset "xor_eq" begin
-    @test tok("1 ⊻= 2", 3).kind==K"⊻="
 end
 
 @testset "lex binary" begin
@@ -707,7 +717,7 @@ end
     @test toks(".1..")   == [".1"=>K"Float",    ".."=>K".."]
     @test toks("0x01..") == ["0x01"=>K"HexInt", ".."=>K".."]
 
-    # Dotted operators and other dotted sufficies
+    # Dotted operators and other dotted suffixes
     @test toks("1234 .+1") == ["1234"=>K"Integer", " "=>K"Whitespace", ".+"=>K"+", "1"=>K"Integer"]
     @test toks("1234.0+1") == ["1234.0"=>K"Float", "+"=>K"+", "1"=>K"Integer"]
     @test toks("1234.0 .+1") == ["1234.0"=>K"Float", " "=>K"Whitespace", ".+"=>K"+", "1"=>K"Integer"]
@@ -811,6 +821,9 @@ for opkind in Tokenize._nondot_symbolic_operator_kinds()
                 tokens = collect(tokenize(str))
                 exop = expr.head == :call ? expr.args[1] : expr.head
                 #println(str)
+                if Symbol(Tokenize.untokenize(tokens[arity == 1 ? 1 : 3], str)) != exop
+                    @info "" arity str exop
+                end
                 @test Symbol(Tokenize.untokenize(tokens[arity == 1 ? 1 : 3], str)) == exop
             else
                 break
@@ -829,7 +842,7 @@ end
 
     # https://github.com/JuliaLang/julia/pull/40948
     @test tok("−").kind == K"-"
-    @test tok("−=").kind == K"-="
+    @test tok("−=").kind == K"op="
     @test tok(".−").dotop
 end
 
@@ -909,6 +922,9 @@ end
     end
     allops = split(join(ops, " "), " ")
     @test all(s->Base.isoperator(Symbol(s)) == is_operator(first(collect(tokenize(s))).kind), allops)
+
+    # "\U1f8b2" added in Julia 1.12
+    @test is_operator(first(collect(tokenize("🢲"))))
 end
 
 const all_kws = Set([
@@ -950,9 +966,6 @@ const all_kws = Set([
     "primitive",
     "type",
     "var",
-    # Literals
-    "true",
-    "false",
     # Word-like operators
     "in",
     "isa",
@@ -962,14 +975,14 @@ const all_kws = Set([
 function check_kw_hashes(iter)
     for cs in iter
         str = String([cs...])
-        if Tokenize.simple_hash(str) in keys(Tokenize.kw_hash)
+        if Tokenize.simple_hash(str) in keys(Tokenize._kw_hash)
             @test str in all_kws
         end
     end
 end
 
 @testset "simple_hash" begin
-    @test length(all_kws) == length(Tokenize.kw_hash)
+    @test length(all_kws) == length(Tokenize._kw_hash)
 
     @testset "Length $len keywords" for len in 1:5
         check_kw_hashes(String([cs...]) for cs in Iterators.product(['a':'z' for _ in 1:len]...))
@@ -997,6 +1010,7 @@ end
 
 @testset "invalid UTF-8 characters" begin
     @test onlytok("\x00") == K"ErrorUnknownCharacter"
+    @test onlytok("₁") == K"ErrorIdentifierStart"
 
     bad_chars = [
         first("\xe2")              # malformed

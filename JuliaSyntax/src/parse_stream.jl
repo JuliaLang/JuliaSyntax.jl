@@ -1,5 +1,5 @@
 #-------------------------------------------------------------------------------
-# Flags hold auxilary information about tokens/nonterminals which the Kind
+# Flags hold auxiliary information about tokens/nonterminals which the Kind
 # doesn't capture in a nice way.
 #
 # TODO: Use `primitive type SyntaxFlags 16 end` rather than an alias?
@@ -24,25 +24,55 @@ const POSTFIX_OP_FLAG  = RawFlags(3<<3)
 
 # The following flags are quite head-specific and may overlap
 
-# Set when K"string" or K"cmdstring" was triple-delimited as with """ or ```
+"""
+Set when K"string" or K"cmdstring" was triple-delimited as with \"\"\" or ```
+"""
 const TRIPLE_STRING_FLAG = RawFlags(1<<5)
-# Set when a K"string", K"cmdstring" or K"Identifier" needs raw string unescaping
+
+"""
+Set when a K"string", K"cmdstring" or K"Identifier" needs raw string unescaping
+"""
 const RAW_STRING_FLAG = RawFlags(1<<6)
 
-# Set for K"tuple", K"block" or K"macrocall" which are delimited by parentheses
+"""
+Set for K"tuple", K"block" or K"macrocall" which are delimited by parentheses
+"""
 const PARENS_FLAG = RawFlags(1<<5)
-# Set for K"quote" for the short form `:x` as oppsed to long form `quote x end`
+
+"""
+Set for various delimited constructs when they contains a trailing comma. For
+example, to distinguish `(a,b,)` vs `(a,b)`, and `f(a)` vs `f(a,)`. Kinds where
+this applies are: `tuple call dotcall macrocall vect curly braces <: >:`.
+"""
+const TRAILING_COMMA_FLAG = RawFlags(1<<6)
+
+"""
+Set for K"quote" for the short form `:x` as opposed to long form `quote x end`
+"""
 const COLON_QUOTE = RawFlags(1<<5)
-# Set for K"toplevel" which is delimited by parentheses
+
+"""
+Set for K"toplevel" which is delimited by parentheses
+"""
 const TOPLEVEL_SEMICOLONS_FLAG = RawFlags(1<<5)
 
-# Set for K"struct" when mutable
+"""
+Set for K"function" in short form definitions such as `f() = 1`
+"""
+const SHORT_FORM_FUNCTION_FLAG = RawFlags(1<<5)
+
+"""
+Set for K"struct" when mutable
+"""
 const MUTABLE_FLAG = RawFlags(1<<5)
 
-# Set for K"module" when it's not bare (`module`, not `baremodule`)
+"""
+Set for K"module" when it's not bare (`module`, not `baremodule`)
+"""
 const BARE_MODULE_FLAG = RawFlags(1<<5)
 
 # Flags holding the dimension of an nrow or other UInt8 not held in the source
+# TODO: Given this is only used for nrow/ncat, we could actually use all the flags?
 const NUMERIC_FLAGS = RawFlags(RawFlags(0xff)<<8)
 
 function set_numeric_flags(n::Integer)
@@ -65,7 +95,11 @@ function remove_flags(n::RawFlags, fs...)
     RawFlags(n & ~(RawFlags((|)(fs...))))
 end
 
-# Return true if any of `test_flags` are set
+"""
+    has_flags(x, test_flags)
+
+Return true if any of `test_flags` are set.
+"""
 has_flags(flags::RawFlags, test_flags) = (flags & test_flags) != 0
 
 #-------------------------------------------------------------------------------
@@ -112,19 +146,26 @@ function untokenize(head::SyntaxHead; unique=true, include_flag_suff=true)
         is_prefix_op_call(head)  && (str = str*"-pre")
         is_postfix_op_call(head) && (str = str*"-post")
 
-        if kind(head) in KSet"string cmdstring Identifier"
+        k = kind(head)
+        if k in KSet"string cmdstring Identifier"
             has_flags(head, TRIPLE_STRING_FLAG) && (str = str*"-s")
             has_flags(head, RAW_STRING_FLAG) && (str = str*"-r")
-        elseif kind(head) in KSet"tuple block macrocall"
+        elseif k in KSet"tuple block macrocall"
             has_flags(head, PARENS_FLAG) && (str = str*"-p")
-        elseif kind(head) == K"quote"
+        elseif k == K"quote"
             has_flags(head, COLON_QUOTE) && (str = str*"-:")
-        elseif kind(head) == K"toplevel"
+        elseif k == K"toplevel"
             has_flags(head, TOPLEVEL_SEMICOLONS_FLAG) && (str = str*"-;")
-        elseif kind(head) == K"struct"
+        elseif k == K"function"
+            has_flags(head, SHORT_FORM_FUNCTION_FLAG) && (str = str*"-=")
+        elseif k == K"struct"
             has_flags(head, MUTABLE_FLAG) && (str = str*"-mut")
-        elseif kind(head) == K"module"
+        elseif k == K"module"
             has_flags(head, BARE_MODULE_FLAG) && (str = str*"-bare")
+        end
+        if k in KSet"tuple call dotcall macrocall vect curly braces <: >:" &&
+                has_flags(head, TRAILING_COMMA_FLAG)
+            str *= "-,"
         end
         is_suffixed(head) && (str = str*"-suf")
         n = numeric_flags(head)
@@ -145,14 +186,72 @@ flags(x) = flags(head(x))
 has_flags(x, test_flags) = has_flags(flags(x), test_flags)
 call_type_flags(x) = call_type_flags(flags(x))
 
+"""
+    is_trivia(x)
+
+Return true for "syntax trivia": tokens in the tree which are either largely
+invisible to the parser (eg, whitespace) or implied by the structure of the AST
+(eg, reserved words).
+"""
 is_trivia(x) = has_flags(x, TRIVIA_FLAG)
+
+"""
+    is_prefix_call(x)
+
+Return true for normal prefix function call syntax such as the `f` call node
+parsed from `f(x)`.
+"""
 is_prefix_call(x)     = call_type_flags(x) == PREFIX_CALL_FLAG
+
+"""
+    is_infix_op_call(x)
+
+Return true for infix operator calls such as the `+` call node parsed from
+`x + y`.
+"""
 is_infix_op_call(x)   = call_type_flags(x) == INFIX_FLAG
+
+"""
+    is_prefix_op_call(x)
+
+Return true for prefix operator calls such as the `+` call node parsed from `+x`.
+"""
 is_prefix_op_call(x)  = call_type_flags(x) == PREFIX_OP_FLAG
+
+"""
+    is_postfix_op_call(x)
+
+Return true for postfix operator calls such as the `'ᵀ` call node parsed from `x'ᵀ`.
+"""
 is_postfix_op_call(x) = call_type_flags(x) == POSTFIX_OP_FLAG
+
+"""
+    is_dotted(x)
+
+Return true for dotted syntax tokens
+"""
 is_dotted(x) = has_flags(x, DOTOP_FLAG)
+
+"""
+    is_suffixed(x)
+
+Return true for operators which have suffixes, such as `+₁`
+"""
 is_suffixed(x) = has_flags(x, SUFFIXED_FLAG)
+
+"""
+    is_decorated(x)
+
+Return true for operators which are decorated with a dot or suffix.
+"""
 is_decorated(x) = is_dotted(x) || is_suffixed(x)
+
+"""
+    numeric_flags(x)
+
+Return the number attached to a `SyntaxHead`. This is only for kinds `K"nrow"`
+and `K"ncat"`, for now.
+"""
 numeric_flags(x) = numeric_flags(flags(x))
 
 #-------------------------------------------------------------------------------
@@ -304,7 +403,7 @@ function ParseStream(text::String, index::Integer=1; version=VERSION)
     ParseStream(unsafe_wrap(Vector{UInt8}, text),
                 text, index, version)
 end
-function ParseStream(text::SubString, index::Integer=1; version=VERSION)
+function ParseStream(text::SubString{String}, index::Integer=1; version=VERSION)
     # See also IOBuffer(SubString("x"))
     ParseStream(unsafe_wrap(Vector{UInt8}, pointer(text), sizeof(text)),
                 text, index, version)
@@ -314,7 +413,8 @@ function ParseStream(text::AbstractString, index::Integer=1; version=VERSION)
 end
 
 # IO-based cases
-function ParseStream(io::IOBuffer; version=VERSION)
+# TODO: switch ParseStream to use a Memory internally on newer versions of Julia
+VERSION < v"1.11.0-DEV.753" && function ParseStream(io::IOBuffer; version=VERSION)
     ParseStream(io.data, io, position(io)+1, version)
 end
 function ParseStream(io::Base.GenericIOBuffer; version=VERSION)
@@ -475,7 +575,7 @@ end
 end
 
 """
-    peek(stream [, n=1]; skip_newlines=false)
+    peek(stream::ParseStream [, n=1]; skip_newlines=false)
 
 Look ahead in the stream `n` tokens, returning the token kind. Comments and
 non-newline whitespace are skipped automatically. Whitespace containing a
@@ -513,8 +613,7 @@ struct FullToken
 end
 
 head(t::FullToken) = t.head
-first_byte(t::FullToken) = t.first_byte
-last_byte(t::FullToken) = t.last_byte
+byte_range(t::FullToken) = t.first_byte:t.last_byte
 span(t::FullToken) = 1 + last_byte(t) - first_byte(t)
 
 function peek_full_token(stream::ParseStream, n::Integer=1;
@@ -566,17 +665,17 @@ function peek_behind(stream::ParseStream, pos::ParseStreamPosition)
 end
 
 function first_child_position(stream::ParseStream, pos::ParseStreamPosition)
+    ranges = stream.ranges
+    @assert pos.range_index > 0
+    parent = ranges[pos.range_index]
     # Find the first nontrivia range which is a child of this range but not a
     # child of the child
     c = 0
-    @assert pos.range_index > 0
-    parent = stream.ranges[pos.range_index]
     for i = pos.range_index-1:-1:1
-        if stream.ranges[i].first_token < parent.first_token
+        if ranges[i].first_token < parent.first_token
             break
         end
-        if (c == 0 || stream.ranges[i].first_token < stream.ranges[c].first_token) &&
-           !is_trivia(stream.ranges[i])
+        if (c == 0 || ranges[i].first_token < ranges[c].first_token) && !is_trivia(ranges[i])
             c = i
         end
     end
@@ -590,19 +689,44 @@ function first_child_position(stream::ParseStream, pos::ParseStreamPosition)
         end
     end
 
-    if c != 0
-        if t != 0
-            if stream.ranges[c].first_token > t
-                # Need a child index strictly before `t`. `c=0` works.
-                return ParseStreamPosition(t, 0)
-            else
-                return ParseStreamPosition(stream.ranges[c].last_token, c)
-            end
-        else
-            return ParseStreamPosition(stream.ranges[c].last_token, c)
-        end
+    if c == 0 || (t != 0 && ranges[c].first_token > t)
+        # Return leaf node at `t`
+        return ParseStreamPosition(t, 0)
     else
-        return ParseStreamPosition(t, c)
+        # Return interior node at `c`
+        return ParseStreamPosition(ranges[c].last_token, c)
+    end
+end
+
+function last_child_position(stream::ParseStream, pos::ParseStreamPosition)
+    ranges = stream.ranges
+    @assert pos.range_index > 0
+    parent = ranges[pos.range_index]
+    # Find the last nontrivia range which is a child of this range
+    c = 0
+    if pos.range_index > 1
+        i = pos.range_index-1
+        if ranges[i].first_token >= parent.first_token
+            # Valid child of current range
+            c = i
+        end
+    end
+
+    # Find last nontrivia token
+    t = 0
+    for i = parent.last_token:-1:parent.first_token
+        if !is_trivia(stream.tokens[i])
+            t = i
+            break
+        end
+    end
+
+    if c == 0 || (t != 0 && ranges[c].last_token < t)
+        # Return leaf node at `t`
+        return ParseStreamPosition(t, 0)
+    else
+        # Return interior node at `c`
+        return ParseStreamPosition(ranges[c].last_token, c)
     end
 end
 
@@ -710,7 +834,7 @@ end
 Bump an invisible zero-width token into the output
 
 This is useful when surrounding syntax implies the presence of a token.  For
-example, `2x` means `2*x` via the juxtoposition rules.
+example, `2x` means `2*x` via the juxtaposition rules.
 """
 function bump_invisible(stream::ParseStream, kind, flags=EMPTY_FLAGS;
                         error=nothing)
@@ -747,8 +871,9 @@ end
 Bump the next token, splitting it into several pieces
 
 Tokens are defined by a number of `token_spec` of shape `(nbyte, kind, flags)`.
-The number of input bytes of the last spec is taken from the remaining bytes of
-the input token, with the associated `nbyte` ignored.
+If all `nbyte` are positive, the sum must equal the token length. If one
+`nbyte` is negative, that token is given `tok_len + nbyte` bytes and the sum of
+all `nbyte` must equal zero.
 
 This is a hack which helps resolves the occasional lexing ambiguity. For
 example
@@ -763,11 +888,14 @@ function bump_split(stream::ParseStream, split_spec::Vararg{Any, N}) where {N}
     tok = stream.lookahead[stream.lookahead_index]
     stream.lookahead_index += 1
     b = _next_byte(stream)
+    toklen = tok.next_byte - b
     for (i, (nbyte, k, f)) in enumerate(split_spec)
         h = SyntaxHead(k, f)
-        b = (i == length(split_spec)) ? tok.next_byte : b + nbyte
-        push!(stream.tokens, SyntaxToken(h, kind(tok), false, b))
+        b += nbyte < 0 ? (toklen + nbyte) : nbyte
+        orig_k = k == K"." ? K"." : kind(tok)
+        push!(stream.tokens, SyntaxToken(h, orig_k, false, b))
     end
+    @assert tok.next_byte == b
     stream.peek_count = 0
     return position(stream)
 end
@@ -971,7 +1099,7 @@ function validate_tokens(stream::ParseStream)
         elseif is_error(k) && k != K"error"
             # Emit messages for non-generic token errors
             tokstr = String(txtbuf[tokrange])
-            msg = if k in KSet"ErrorInvisibleChar ErrorUnknownCharacter"
+            msg = if k in KSet"ErrorInvisibleChar ErrorUnknownCharacter ErrorIdentifierStart"
                 "$(_token_error_descriptions[k]) $(repr(tokstr[1]))"
             elseif k in KSet"ErrorInvalidUTF8 ErrorBidiFormatting"
                 "$(_token_error_descriptions[k]) $(repr(tokstr))"
@@ -1128,6 +1256,17 @@ unsafe_textbuf(stream) = stream.textbuf
 first_byte(stream::ParseStream) = first(stream.tokens).next_byte # Use sentinel token
 last_byte(stream::ParseStream) = _next_byte(stream)-1
 any_error(stream::ParseStream) = any_error(stream.diagnostics)
+
+# Return last non-whitespace byte which was parsed
+function last_non_whitespace_byte(stream::ParseStream)
+    for i = length(stream.tokens):-1:1
+        tok = stream.tokens[i]
+        if !(kind(tok) in KSet"Comment Whitespace NewlineWs ErrorEofMultiComment")
+            return tok.next_byte - 1
+        end
+    end
+    return first_byte(stream) - 1
+end
 
 function Base.empty!(stream::ParseStream)
     t = last(stream.tokens)

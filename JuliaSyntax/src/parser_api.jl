@@ -16,15 +16,20 @@ function ParseError(stream::ParseStream; incomplete_tag=:none, kws...)
 end
 
 function Base.showerror(io::IO, err::ParseError)
-    println(io, "ParseError:")
     # Only show the first parse error for now - later errors are often
     # misleading due to the way recovery works
     i = findfirst(is_error, err.diagnostics)
     if isnothing(i)
         i = lastindex(err.diagnostics)
+        level_info = " some warnings detected:"
+    else
+        level_info = ""
     end
+    println(io, "ParseError:", level_info)
     show_diagnostics(io, err.diagnostics[1:i], err.source)
 end
+
+sourcefile(err::ParseError) = err.source
 
 """
     parse!(stream::ParseStream; rule=:all)
@@ -156,7 +161,7 @@ Token type resulting from calling `tokenize(text)`
 
 Use
 * `kind(tok)` to get the token kind
-* `untokenize(tok, text)` to retreive the text
+* `untokenize(tok, text)` to retrieve the text
 * Predicates like `is_error(tok)` to query token categories and flags
 """
 struct Token
@@ -169,15 +174,20 @@ Token() = Token(SyntaxHead(K"None", EMPTY_FLAGS), 0:0)
 head(t::Token) = t.head
 
 """
-    tokenize(text)
+    tokenize(text; operators_as_identifiers=true)
 
 Returns the tokenized UTF-8 encoded `text` as a vector of `Token`s. The
-text for the token can be retreived by using `untokenize()`. The full text can be
+text for the token can be retrieved by using `untokenize()`. The full text can be
 reconstructed with, for example, `join(untokenize.(tokenize(text), text))`.
 
 This interface works on UTF-8 encoded string or buffer data only.
+
+The keyword `operators_as_identifiers` specifies whether operators in
+identifier-position should have `K"Identifier"` as their kind, or be emitted as
+more specific operator kinds. For example, whether the `+` in `a + b` should be
+emitted as `K"Identifier"` (the default) or as `K"+"`.
 """
-function tokenize(text)
+function tokenize(text; operators_as_identifiers=true)
     ps = ParseStream(text)
     parse!(ps, rule=:all)
     ts = ps.tokens
@@ -187,7 +197,15 @@ function tokenize(text)
             continue
         end
         r = ts[i-1].next_byte:ts[i].next_byte-1
-        push!(output_tokens, Token(head(ts[i]), r))
+        k = kind(ts[i])
+        if k == K"Identifier" && !operators_as_identifiers
+            orig_k = ts[i].orig_kind
+            if is_operator(orig_k) && !is_word_operator(orig_k)
+                k = orig_k
+            end
+        end
+        f = flags(ts[i])
+        push!(output_tokens, Token(SyntaxHead(k,f), r))
     end
     output_tokens
 end

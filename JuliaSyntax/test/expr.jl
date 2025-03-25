@@ -65,6 +65,21 @@
                           :body,
                      ),
                 )
+
+            @test parseall("a\n\nx") ==
+                Expr(:toplevel,
+                    LineNumberNode(1),
+                    :a,
+                    LineNumberNode(3),
+                    :x
+                )
+            @test parseall("a\n\nx;y") ==
+                Expr(:toplevel,
+                    LineNumberNode(1),
+                    :a,
+                    LineNumberNode(3),
+                    Expr(:toplevel, :x, :y)
+                )
         end
 
         @testset "Function definition lines" begin
@@ -115,6 +130,10 @@
         @testset "->" begin
             @test parsestmt("a -> b") ==
                 Expr(:->, :a, Expr(:block, LineNumberNode(1), :b))
+            @test parsestmt("(a,) -> b") ==
+                Expr(:->, Expr(:tuple, :a), Expr(:block, LineNumberNode(1), :b))
+            @test parsestmt("(a where T) -> b") ==
+                Expr(:->, Expr(:where, :a, :T), Expr(:block, LineNumberNode(1), :b))
             # @test parsestmt("a -> (\nb;c)") ==
             #     Expr(:->, :a, Expr(:block, LineNumberNode(1), :b))
             @test parsestmt("a -> begin\nb\nc\nend") ==
@@ -122,6 +141,20 @@
                                    LineNumberNode(1),
                                    LineNumberNode(2), :b,
                                    LineNumberNode(3), :c))
+            @test parsestmt("(a;b=1) -> c") ==
+                Expr(:->,
+                     Expr(:block, :a, LineNumberNode(1), Expr(:(=), :b, 1)),
+                     Expr(:block, LineNumberNode(1), :c))
+            @test parsestmt("(a...;b...) -> c") ==
+                Expr(:->,
+                     Expr(:tuple, Expr(:parameters, Expr(:(...), :b)), Expr(:(...), :a)),
+                     Expr(:block, LineNumberNode(1), :c))
+            @test parsestmt("(;) -> c") ==
+                Expr(:->,
+                     Expr(:tuple, Expr(:parameters)),
+                     Expr(:block, LineNumberNode(1), :c))
+            @test parsestmt("a::T -> b") ==
+                Expr(:->, Expr(:(::), :a, :T), Expr(:block, LineNumberNode(1), :b))
         end
 
         @testset "elseif" begin
@@ -468,6 +501,16 @@
         @test parsestmt("./x", ignore_errors=true) == Expr(:call, Expr(:error, Expr(:., :/)), :x)
     end
 
+    @testset "syntactic update-assignment operators" begin
+        @test parsestmt("x += y") == Expr(:(+=), :x, :y)
+        @test parsestmt("x .+= y") == Expr(:(.+=), :x, :y)
+        @test parsestmt(":+=") == QuoteNode(Symbol("+="))
+        @test parsestmt(":(+=)") == QuoteNode(Symbol("+="))
+        @test parsestmt(":.+=") == QuoteNode(Symbol(".+="))
+        @test parsestmt(":(.+=)") == QuoteNode(Symbol(".+="))
+        @test parsestmt("x \u2212= y") == Expr(:(-=), :x, :y)
+    end
+
     @testset "let" begin
         @test parsestmt("let x=1\n end") ==
             Expr(:let, Expr(:(=), :x, 1),  Expr(:block, LineNumberNode(2)))
@@ -663,6 +706,26 @@
             Expr(:macrocall, GlobalRef(Core, Symbol("@doc")), LineNumberNode(2), "x", :f)
     end
 
+    @testset "String and cmd macros" begin
+        # Custom string macros
+        @test parsestmt("foo\"str\"") ==
+            Expr(:macrocall, Symbol("@foo_str"), LineNumberNode(1), "str")
+        # Bare @cmd
+        @test parsestmt("\n`str`") ==
+            Expr(:macrocall, GlobalRef(Core, Symbol("@cmd")), LineNumberNode(2), "str")
+        # Custom cmd macros
+        @test parsestmt("foo`str`") ==
+            Expr(:macrocall, Symbol("@foo_cmd"), LineNumberNode(1), "str")
+        @test parsestmt("foo`str`flag") ==
+            Expr(:macrocall, Symbol("@foo_cmd"), LineNumberNode(1), "str", "flag")
+        @test parsestmt("foo```\n  a\n  b```") ==
+            Expr(:macrocall, Symbol("@foo_cmd"), LineNumberNode(1), "a\nb")
+        # Expr conversion distinguishes from explicit calls to a macro of the same name
+        @test parsestmt("@foo_cmd `str`") ==
+            Expr(:macrocall, Symbol("@foo_cmd"), LineNumberNode(1),
+                 Expr(:macrocall, GlobalRef(Core, Symbol("@cmd")), LineNumberNode(1), "str"))
+    end
+
     @testset "return" begin
         @test parsestmt("return x") == Expr(:return, :x)
         @test parsestmt("return")  == Expr(:return, nothing)
@@ -692,6 +755,9 @@
                  Expr(:block, LineNumberNode(2), :a, LineNumberNode(3), :b))
         @test parsestmt("struct A const a end", version=v"1.8") ==
             Expr(:struct, false, :A, Expr(:block, LineNumberNode(1), Expr(:const, :a)))
+
+        @test parsestmt("struct A \n \"doc\" \n a end") ==
+            Expr(:struct, false, :A, Expr(:block, LineNumberNode(2), "doc", :a))
     end
 
     @testset "export" begin
@@ -767,4 +833,10 @@
         @test parsestmt("import A.:(+) as y", ignore_warnings=true, version=v"1.6") ==
             Expr(:import, Expr(:as, Expr(:., :A, :+), :y))
     end
+end
+
+@testset "SyntaxNode->Expr conversion" begin
+    src = repeat('a', 1000) * '\n' * "@hi"
+    @test Expr(parsestmt(SyntaxNode, SubString(src, 1001:lastindex(src)))) ==
+        Expr(:macrocall, Symbol("@hi"), LineNumberNode(2))
 end
