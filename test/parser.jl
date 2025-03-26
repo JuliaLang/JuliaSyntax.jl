@@ -410,6 +410,9 @@ tests = [
         "(a=1)[]" =>  "(ref (parens (= a 1)))"
         "a[end]"  =>  "(ref a end)"
         "a[begin]"  =>  "(ref a begin)"
+        "a[var\"end\"]"  =>  "(ref a (var end))"
+        "a[var\"begin\"]"  =>  "(ref a (var begin))"
+        "a[var\"test\"]"  =>  "(ref a (var test))"
         "a[:(end)]" => "(typed_hcat a (quote-: (parens (error-t))) (error-t))"
         "T[x   y]"  =>  "(typed_hcat T x y)"
         "T[x ; y]"  =>  "(typed_vcat T x y)"
@@ -1153,11 +1156,19 @@ parsestmt_with_kind_tests = [
     "a >>= b" => "(op= a::Identifier >>::Identifier b::Identifier)"
     ":+="    => "(quote-: +=::op=)"
     ":.+="   => "(quote-: (. +=::op=))"
+    ((v=v"1.13",), "a[begin]") => "(ref a::Identifier begin::begin)"
+    ((v=v"1.13",), "a[end]") => "(ref a::Identifier end::end)"
 ]
 
 @testset "parser `Kind` remapping" begin
     @testset "$(repr(input))" for (input, output) in parsestmt_with_kind_tests
-        input = ((show_kind=true,), input)
+        if !(input isa AbstractString)
+            opts, input_s = input
+        else
+            opts = NamedTuple()
+            input_s = input
+        end
+        input = ((show_kind=true, opts...), input_s)
         test_parse(JuliaSyntax.parse_stmts, input, output)
     end
 end
