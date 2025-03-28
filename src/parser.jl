@@ -2359,7 +2359,7 @@ function parse_do(ps::ParseState)
         # f() do x, y\n body end  ==>  (call f (do (tuple x y) (block body)))
         parse_comma_separated(ps, parse_range)
     end
-    emit(ps, m, K"tuple")
+    peek_behind(ps).kind != K"where" && emit(ps, m, K"tuple")
     parse_block(ps)
     bump_closing_token(ps, K"end")
     emit(ps, mark, K"do")
