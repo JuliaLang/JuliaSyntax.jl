@@ -290,6 +290,10 @@ end
 
 _default_system_parser = _has_v1_6_hooks ? Core._parse : nothing
 
+
+# hook into InteractiveUtils.@activate
+activate!() = enable_in_core!()
+
 """
     enable_in_core!([enable=true; freeze_world_age=true, debug_filename=nothing])
 
