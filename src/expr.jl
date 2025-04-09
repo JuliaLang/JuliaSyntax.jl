@@ -140,7 +140,7 @@ function _string_to_Expr(args)
         #   """\n  a\n  b""" ==>  "a\nb"
         return only(args2)
     else
-        # This only happens when the kind is K"string" or when an error has occurred. 
+        # This only happens when the kind is K"string" or when an error has occurred.
         return Expr(:string, args2...)
     end
 end
@@ -159,7 +159,7 @@ function _fixup_Expr_children!(head, loc, args)
         arg = args[i]
         was_parens = @isexpr(arg, :parens)
         arg = _strip_parens(arg)
-        if @isexpr(arg, :(=)) && eq_to_kw_in_call && i > 1 
+        if @isexpr(arg, :(=)) && eq_to_kw_in_call && i > 1
             arg = Expr(:kw, arg.args...)
         elseif k != K"parens" && @isexpr(arg, :., 1) && arg.args[1] isa Tuple
             h, a = arg.args[1]::Tuple{SyntaxHead,Any}
@@ -575,6 +575,13 @@ function build_tree(::Type{Expr}, stream::ParseStream;
     end
     loc = source_location(LineNumberNode, source, first(entry.srcrange))
     only(_fixup_Expr_children!(SyntaxHead(K"None",EMPTY_FLAGS), loc, Any[entry.ex]))
+end
+
+
+function build_tree(::Type{Tuple{Expr, SyntaxNode}}, stream::ParseStream;
+                    filename=nothing, first_line=1, kws...)
+    syntaxtree = build_tree(SyntaxNode, stream, filename, first_line, kws...)
+    Expr.(syntaxtree)
 end
 
 function _to_expr(node)

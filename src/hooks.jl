@@ -136,7 +136,11 @@ end
 # Debug log file for dumping parsed code
 const _debug_log = Ref{Union{Nothing,IO}}(nothing)
 
-function core_parser_hook(code, filename::String, lineno::Int, offset::Int, options::Symbol)
+function core_parser_hook_for_lowering(code, filename::String, lineno::Int, offset::Int, options::Symbol)
+    core_parser_hook(code, filename::String, lineno::Int, offset::Int, options::Symbol, true)
+end
+
+function core_parser_hook(code, filename::String, lineno::Int, offset::Int, options::Symbol, for_lowering=false)
     try
         # TODO: Check that we do all this input wrangling without copying the
         # code buffer
@@ -233,7 +237,7 @@ function core_parser_hook(code, filename::String, lineno::Int, offset::Int, opti
             #
             # show_diagnostics(stdout, stream.diagnostics, code)
             #
-            ex = build_tree(Expr, stream; filename=filename, first_line=lineno)
+            ex = build_tree(for_lowering ? Tuple{Expr, SyntaxNode} : Expr, stream; filename=filename, first_line=lineno)
         end
 
         # Note the next byte in 1-based indexing is `last_byte(stream) + 1` but
@@ -292,7 +296,7 @@ _default_system_parser = _has_v1_6_hooks ? Core._parse : nothing
 
 
 # hook into InteractiveUtils.@activate
-activate!() = enable_in_core!()
+activate!(enable=true) = enable_in_core!(enable)
 
 """
     enable_in_core!([enable=true; freeze_world_age=true, debug_filename=nothing])
@@ -319,7 +323,10 @@ function enable_in_core!(enable=true; freeze_world_age = true,
         close(_debug_log[])
         _debug_log[] = nothing
     end
-    if enable
+    if enable == :JuliaLowering
+        world_age = freeze_world_age ? Base.get_world_counter() : typemax(UInt)
+        _set_core_parse_hook(fix_world_age(core_parser_hook_for_lowering, world_age))
+    elseif enable
         world_age = freeze_world_age ? Base.get_world_counter() : typemax(UInt)
         _set_core_parse_hook(fix_world_age(core_parser_hook, world_age))
     else
