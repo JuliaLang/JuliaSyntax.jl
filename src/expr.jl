@@ -580,8 +580,8 @@ end
 
 function build_tree(::Type{Tuple{Expr, SyntaxNode}}, stream::ParseStream;
                     filename=nothing, first_line=1, kws...)
-    syntaxtree = build_tree(SyntaxNode, stream, filename, first_line, kws...)
-    Expr.(syntaxtree)
+    syntaxtree = build_tree(SyntaxNode, stream; filename, first_line, kws...)
+    Expr(:toplevel, map(Expr, syntaxtree))
 end
 
 function _to_expr(node)

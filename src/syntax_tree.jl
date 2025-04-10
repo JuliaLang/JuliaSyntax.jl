@@ -131,10 +131,15 @@ numchildren(node::TreeNode) = (isnothing(node.children) ? 0 : length(node.childr
 Base.getindex(node::AbstractSyntaxNode, i::Int) = children(node)[i]
 Base.getindex(node::AbstractSyntaxNode, rng::UnitRange) = view(children(node), rng)
 Base.firstindex(node::AbstractSyntaxNode) = 1
-Base.lastindex(node::AbstractSyntaxNode) = length(children(node))
+Base.length(node::AbstractSyntaxNode) = length(children(node))
+Base.lastindex(node::AbstractSyntaxNode) = length(node)
 
 function Base.setindex!(node::SN, x::SN, i::Int) where {SN<:AbstractSyntaxNode}
     children(node)[i] = x
+end
+
+function Base.iterate(A::AbstractSyntaxNode, i=1)
+    (@inline; (i - 1)%UInt < length(A)%UInt ? (@inbounds A[i], i + 1) : nothing)
 end
 
 """
