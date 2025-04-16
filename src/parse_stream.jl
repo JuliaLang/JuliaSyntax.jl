@@ -1139,7 +1139,7 @@ wrap them in a single node.
 The tree here is constructed depth-first in postorder.
 """
 function build_tree(make_node::Function, ::Type{NodeType}, stream::ParseStream;
-                    kws...) where NodeType
+                    operators_as_identifiers = true, kws...) where NodeType
     stack = Vector{NamedTuple{(:first_token,:node),Tuple{Int,NodeType}}}()
 
     tokens = stream.tokens
@@ -1159,6 +1159,9 @@ function build_tree(make_node::Function, ::Type{NodeType}, stream::ParseStream;
             srcrange = (stream.tokens[i-1].next_byte:
                         stream.tokens[i].next_byte - 1)
             h = head(t)
+            if !operators_as_identifiers
+                h = remake_head_with_original_kind(h, t.orig_kind)
+            end
             node = make_node(h, srcrange, nothing)
             if !isnothing(node)
                 push!(stack, (first_token=i, node=node))
@@ -1186,6 +1189,10 @@ function build_tree(make_node::Function, ::Type{NodeType}, stream::ParseStream;
             srcrange = (stream.tokens[r.first_token-1].next_byte:
                         stream.tokens[r.last_token].next_byte - 1)
             children = (stack[n].node for n = k:length(stack))
+            # h = head(r)
+            # if !operators_as_identifiers
+            #     h = remake_head_with_original_kind(h, r.orig_kind)
+            # end
             node = make_node(head(r), srcrange, children)
             resize!(stack, k-1)
             if !isnothing(node)
@@ -1202,6 +1209,13 @@ function build_tree(make_node::Function, ::Type{NodeType}, stream::ParseStream;
         children = (x.node for x in stack)
         return make_node(SyntaxHead(K"wrapper", EMPTY_FLAGS), srcrange, children)
     end
+end
+
+function remake_head_with_original_kind(h::SyntaxHead, orig_k::Kind)
+    if kind(h) == K"Identifier" && is_operator(orig_k) && !is_word_operator(orig_k)
+        return SyntaxHead(orig_k, flags(h))
+    end
+    return h
 end
 
 function sourcetext(stream::ParseStream; steal_textbuf=false)
