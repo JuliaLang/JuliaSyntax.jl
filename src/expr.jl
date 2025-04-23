@@ -577,13 +577,6 @@ function build_tree(::Type{Expr}, stream::ParseStream;
     only(_fixup_Expr_children!(SyntaxHead(K"None",EMPTY_FLAGS), loc, Any[entry.ex]))
 end
 
-
-function build_tree(::Type{Tuple{Expr, SyntaxNode}}, stream::ParseStream;
-                    filename=nothing, first_line=1, kws...)
-    syntaxtree = build_tree(SyntaxNode, stream; filename, first_line, kws...)
-    Expr(:toplevel, map(Expr, syntaxtree))
-end
-
 function _to_expr(node)
     file = sourcefile(node)
     if is_leaf(node)

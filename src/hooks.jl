@@ -136,11 +136,7 @@ end
 # Debug log file for dumping parsed code
 const _debug_log = Ref{Union{Nothing,IO}}(nothing)
 
-function core_parser_hook_for_lowering(code, filename::String, lineno::Int, offset::Int, options::Symbol)
-    core_parser_hook(code, filename::String, lineno::Int, offset::Int, options::Symbol, true)
-end
-
-function core_parser_hook(code, filename::String, lineno::Int, offset::Int, options::Symbol, for_lowering=false)
+function core_parser_hook(code, filename::String, lineno::Int, offset::Int, options::Symbol)
     try
         # TODO: Check that we do all this input wrangling without copying the
         # code buffer
@@ -237,7 +233,7 @@ function core_parser_hook(code, filename::String, lineno::Int, offset::Int, opti
             #
             # show_diagnostics(stdout, stream.diagnostics, code)
             #
-            ex = build_tree(for_lowering ? Tuple{Expr, SyntaxNode} : Expr, stream; filename=filename, first_line=lineno)
+            ex = build_tree(Expr, stream; filename=filename, first_line=lineno)
         end
 
         # Note the next byte in 1-based indexing is `last_byte(stream) + 1` but
@@ -294,9 +290,8 @@ end
 
 _default_system_parser = _has_v1_6_hooks ? Core._parse : nothing
 
-
 # hook into InteractiveUtils.@activate
-activate!(enable=true; for_lowering=false) = enable_in_core!(enable, for_lowering)
+activate!(enable=true) = enable_in_core!(enable)
 
 """
     enable_in_core!([enable=true; freeze_world_age=true, debug_filename=nothing])
@@ -312,7 +307,7 @@ Keyword arguments:
 * `debug_filename` - File name of parser debug log (defaults to `nothing` or
   the value of `ENV["JULIA_SYNTAX_DEBUG_FILE"]`).
 """
-function enable_in_core!(enable=true, for_lowering=false; freeze_world_age = true,
+function enable_in_core!(enable=true; freeze_world_age = true,
         debug_filename   = get(ENV, "JULIA_SYNTAX_DEBUG_FILE", nothing))
     if !_has_v1_6_hooks
         error("Cannot use JuliaSyntax as the main Julia parser in Julia version $VERSION < 1.6")
@@ -324,9 +319,8 @@ function enable_in_core!(enable=true, for_lowering=false; freeze_world_age = tru
         _debug_log[] = nothing
     end
     if enable
-        hook = for_lowering ? core_parser_hook_for_lowering : core_parser_hook
         world_age = freeze_world_age ? Base.get_world_counter() : typemax(UInt)
-        _set_core_parse_hook(fix_world_age(hook, world_age))
+        _set_core_parse_hook(fix_world_age(core_parser_hook, world_age))
     else
         @assert !isnothing(_default_system_parser)
         _set_core_parse_hook(_default_system_parser)
