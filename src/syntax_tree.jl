@@ -138,10 +138,6 @@ function Base.setindex!(node::SN, x::SN, i::Int) where {SN<:AbstractSyntaxNode}
     children(node)[i] = x
 end
 
-function Base.iterate(A::AbstractSyntaxNode, i=1)
-    (@inline; (i - 1)%UInt < length(A)%UInt ? (@inbounds A[i], i + 1) : nothing)
-end
-
 """
     head(x)
 
