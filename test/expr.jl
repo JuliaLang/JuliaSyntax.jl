@@ -207,6 +207,21 @@
                           LineNumberNode(3)
                      )
                 )
+            if VERSION >= v"1.12-"
+                @test parsestmt("for x=xs\ny\nelse\nz\nend") ==
+                    Expr(:for,
+                         Expr(:(=), :x, :xs),
+                         Expr(:block,
+                              LineNumberNode(2),
+                              :y,
+                         ),
+                         Expr(:block,
+                              LineNumberNode(4),
+                              :z,
+                              LineNumberNode(5)
+                         )
+                    )
+            end
             @test parsestmt("while cond\n\nend") ==
                 Expr(:while,
                      :cond,
@@ -224,6 +239,21 @@
                           LineNumberNode(3)
                      )
                 )
+            if VERSION >= v"1.12-"
+                @test parsestmt("while cond\ny\nelse\nz\nend") ==
+                    Expr(:while,
+                         :cond,
+                         Expr(:block,
+                              LineNumberNode(2),
+                              :y,
+                         ),
+                         Expr(:block,
+                              LineNumberNode(4),
+                              :z,
+                              LineNumberNode(5)
+                         )
+                    )
+            end
         end
     end
 
@@ -379,7 +409,7 @@
             Expr(:call, :f, Expr(:parameters, Expr(:kw, :b, 2)))
         @test parsestmt("f(a=1; b=2)") ==
             Expr(:call, :f, Expr(:parameters, Expr(:kw, :b, 2)), Expr(:kw, :a, 1))
-        @test parsestmt("f(a; b; c)") == 
+        @test parsestmt("f(a; b; c)") ==
             Expr(:call, :f, Expr(:parameters, Expr(:parameters, :c), :b), :a)
         @test parsestmt("+(a=1,)") ==
             Expr(:call, :+, Expr(:kw, :a, 1))
@@ -389,11 +419,11 @@
         # Operator calls:  = is not :kw
         @test parsestmt("(x=1) != 2") ==
             Expr(:call, :!=, Expr(:(=), :x, 1), 2)
-        @test parsestmt("+(a=1)") == 
+        @test parsestmt("+(a=1)") ==
             Expr(:call, :+, Expr(:(=), :a, 1))
-        @test parsestmt("(a=1)'") == 
+        @test parsestmt("(a=1)'") ==
             Expr(Symbol("'"), Expr(:(=), :a, 1))
-        @test parsestmt("(a=1)'ᵀ") == 
+        @test parsestmt("(a=1)'ᵀ") ==
             Expr(:call, Symbol("'ᵀ"), Expr(:(=), :a, 1))
 
         # Dotcall
@@ -611,8 +641,8 @@
             Expr(:generator, :x,
                  Expr(:filter, :z, Expr(:(=), :a, :as), Expr(:(=), :b, :bs)))
         @test parsestmt("(x for a in as, b in bs for c in cs, d in ds)") ==
-            Expr(:flatten, 
-                Expr(:generator, 
+            Expr(:flatten,
+                Expr(:generator,
                      Expr(:generator, :x, Expr(:(=), :c, :cs), Expr(:(=), :d, :ds)),
                      Expr(:(=), :a, :as), Expr(:(=), :b, :bs)))
         @test parsestmt("(x for a in as for b in bs if z)") ==
@@ -782,7 +812,7 @@
         @test parsestmt("global x ~ 1") == Expr(:global, Expr(:call, :~, :x, 1))
         @test parsestmt("global x += 1") == Expr(:global, Expr(:+=, :x, 1))
 
-        # Parsing of global/local with 
+        # Parsing of global/local with
         @test parsestmt("global (x,y)") == Expr(:global, :x, :y)
         @test parsestmt("local (x,y)") == Expr(:local, :x, :y)
     end
