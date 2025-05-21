@@ -3280,14 +3280,16 @@ function parse_string(ps::ParseState, raw::Bool)
                 m = position(ps)
                 bump(ps, TRIVIA_FLAG)
                 opts = parse_brackets(ps, K")") do had_commas, had_splat, num_semis, num_subexprs
-                    return (needs_parameters=false,
+                    return (needs_parameters=true,
                             simple_interp=!had_commas && num_semis == 0 && num_subexprs == 1)
                 end
                 if !opts.simple_interp || peek_behind(ps, skip_parens=false).kind == K"generator"
                     # "$(x,y)" ==> (string (parens (error x y)))
-                    emit(ps, m, K"error", error="invalid interpolation syntax")
+                    emit(ps, m, K"format")
+                    min_supported_version(v"1.10", ps, m, "string formatting syntax")
+                else
+                    emit(ps, m, K"parens")
                 end
-                emit(ps, m, K"parens")
             elseif k == K"var"
                 # var identifiers disabled in strings
                 # "$var"  ==>  (string var)
