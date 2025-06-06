@@ -76,7 +76,7 @@ function Base.hash(node::GreenNode, h::UInt)
     children = node.children
     if children === nothing
         h = hash(nothing, h)
-    else
+    else # optimization - avoid extra allocations from `hash(::AbstractVector, ::UInt)`
         for child in children
             h = hash(child, h)
         end

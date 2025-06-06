@@ -23,7 +23,7 @@ function Base.hash(node::TreeNode, h::UInt)
     children = node.children
     if children === nothing
         return hash(nothing, h)
-    else
+    else # optimization - avoid extra allocations from `hash(::AbstractVector, ::UInt)`
         for child in children
             h = hash(child, h)
         end
@@ -62,7 +62,11 @@ struct SyntaxData <: AbstractSyntaxData
 end
 
 Base.hash(data::SyntaxData, h::UInt) =
-    hash(data.source, hash(data.raw, hash(data.position, Core.invoke(hash, Tuple{Any,UInt}, data.val, h))))
+    hash(data.source, hash(data.raw, hash(data.position,
+        # Avoid dynamic dispatch:
+        # This does not support custom `hash` implementation that may be defined for `typeof(data.val)`,
+        # However, such custom user types should not generally appear in the AST.
+        Core.invoke(hash, Tuple{Any,UInt}, data.val, h))))
 function Base.:(==)(a::SyntaxData, b::SyntaxData)
     a.source == b.source && a.raw == b.raw && a.position == b.position && a.val === b.val
 end
