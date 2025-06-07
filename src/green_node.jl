@@ -1,24 +1,10 @@
 """
-    GreenNode(head, span)
-    GreenNode(head, children...)
+    struct GreenNode
 
-A "green tree" is a lossless syntax tree which overlays all the source text.
-The most basic properties of a green tree are that:
-
-* Nodes cover a contiguous span of bytes in the text
-* Sibling nodes are ordered in the same order as the text
-
-As implementation choices, we choose that:
-
-* Nodes are immutable and don't know their parents or absolute position, so can
-  be cached and reused
-* Nodes are homogeneously typed at the language level so they can be stored
-  concretely, with the `head` defining the node type. Normally this would
-  include a "syntax kind" enumeration, but it can also include flags and record
-  information the parser knew about the layout of the child nodes.
-* For simplicity and uniformity, leaf nodes cover a single token in the source.
-  This is like rust-analyzer, but different from Roslyn where leaves can
-  include syntax trivia.
+An explicit pointer-y representation of the green tree produced by the parser.
+See [`RawGreenNode`](@ref) for documentation on working with the implicit green
+tree directly. However, this representation is useful for introspection as it
+provides O(1) access to the children (as well as forward iteration).
 """
 struct GreenNode{Head}
     head::Head
@@ -132,10 +118,39 @@ function Base.show(io::IO, ::MIME"text/plain", node::GreenNode, str::AbstractStr
     _show_green_node(io, node, "", 1, str, show_trivia)
 end
 
-function build_tree(::Type{GreenNode}, stream::ParseStream; kws...)
-    build_tree(GreenNode{SyntaxHead}, stream; kws...) do h, srcrange, cs
-        span = length(srcrange)
-        isnothing(cs) ? GreenNode(h, span) :
-                        GreenNode(h, span, collect(GreenNode{SyntaxHead}, cs))
+function GreenNode(cursor::GreenTreeCursor)
+    if is_leaf(cursor)
+        children = nothing
+    else
+        children = GreenNode{typeof(head(cursor))}[]
+        for child in reverse(cursor)
+            pushfirst!(children, GreenNode(child))
+        end
+    end
+    return GreenNode{typeof(head(cursor))}(head(cursor), span(cursor), children)
+end
+
+function build_tree(T::Type{GreenNode}, stream::ParseStream; kws...)
+    cursor = GreenTreeCursor(stream)
+    if treesize(cursor)+1 != length(stream.output)-1 # First output is a tombstone =
+        # There are multiple toplevel nodes, e.g. because we're using this
+        # to test a partial parse. Wrap everything in K"wrapper"
+        all_processed = 0
+        local cs
+        while true
+            c = GreenNode(cursor)
+            if !@isdefined(cs)
+                cs = [c]
+            else
+                pushfirst!(cs, c)
+            end
+            all_processed += treesize(cursor)+1
+            all_processed == length(stream.output)-1 && break
+            cursor = GreenTreeCursor(stream.output, length(stream.output) - all_processed)
+        end
+        @assert length(cs) != 1
+        return GreenNode(SyntaxHead(K"wrapper", NON_TERMINAL_FLAG), stream.next_byte-1, cs)
+    else
+        return GreenNode(cursor)
     end
 end
