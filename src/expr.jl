@@ -322,10 +322,10 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         args[1] = length(iters) == 1 ? only(iters) : Expr(:block, iters...)
         # Add extra line number node for the `end` of the block. This may seem
         # useless but it affects code coverage.
-        push!(args[2].args, endloc)
+        push!(args[end].args, endloc)
     elseif k == K"while"
         # Line number node for the `end` of the block as in `for` loops.
-        push!(args[2].args, endloc)
+        push!(args[end].args, endloc)
     elseif k in KSet"tuple vect braces"
         # Move parameters blocks to args[1]
         _reorder_parameters!(args, 1)
