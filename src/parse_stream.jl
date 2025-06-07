@@ -71,6 +71,11 @@ Set for K"module" when it's not bare (`module`, not `baremodule`)
 """
 const BARE_MODULE_FLAG = RawFlags(1<<5)
 
+"""
+Set for nodes that are non-terminals
+"""
+const NON_TERMINAL_FLAG = RawFlags(1<<7)
+
 # Flags holding the dimension of an nrow or other UInt8 not held in the source
 # TODO: Given this is only used for nrow/ncat, we could actually use all the flags?
 const NUMERIC_FLAGS = RawFlags(RawFlags(0xff)<<8)
@@ -286,24 +291,36 @@ Range in the source text which will become a node in the tree. Can be either a
 token (leaf node of the tree) or an interior node, depending on how the
 start_mark compares to previous nodes.
 """
-struct TaggedRange
-    head::SyntaxHead # Kind,flags
-    # The following field is used for one of two things:
-    # - For leaf nodes it's an index in the tokens array
-    # - For non-leaf nodes it points to the index of the first child
-    first_token::UInt32
-    last_token::UInt32
+struct RawGreenNode
+    head::SyntaxHead                  # Kind,flags
+    byte_span::UInt32                 # Number of bytes covered by this range
+    # If NON_TERMINAL_FLAG is set, this is the total number of child nodes
+    # Otherwise this is a terminal node (i.e. a token) and this is orig_kind
+    node_span_or_orig_kind::UInt32
 end
 
-head(range::TaggedRange) = range.head
+function Base.getproperty(rgn::RawGreenNode, name::Symbol)
+    if name == :node_span
+        has_flags(rgn.head, NON_TERMINAL_FLAG) || return 0 # Leaf nodes have no children
+        name = :node_span_or_orig_kind
+    elseif name == :orig_kind
+        has_flags(rgn.head, NON_TERMINAL_FLAG) && error("Cannot access orig_kind for non-terminal node")
+        name = :node_span_or_orig_kind
+    end
+    getfield(rgn, name)
+end
+
+head(range::RawGreenNode) = range.head
 
 #-------------------------------------------------------------------------------
 struct ParseStreamPosition
     token_index::UInt32  # Index of last token in output
     range_index::UInt32
+    byte_index::UInt32   # Current byte position in stream
+    node_index::UInt32   # Total number of nodes (tokens + ranges) emitted
 end
 
-const NO_POSITION = ParseStreamPosition(0, 0)
+const NO_POSITION = ParseStreamPosition(0, 0, 0, 0)
 
 #-------------------------------------------------------------------------------
 """
@@ -349,10 +366,7 @@ mutable struct ParseStream
     lookahead_index::Int
     # Pool of stream positions for use as working space in parsing
     position_pool::Vector{Vector{ParseStreamPosition}}
-    # Buffer of finalized tokens
-    tokens::Vector{SyntaxToken}
-    # Parser output as an ordered sequence of ranges, parent nodes after children.
-    ranges::Vector{TaggedRange}
+    output::Vector{RawGreenNode}
     # Parsing diagnostics (errors/warnings etc)
     diagnostics::Vector{Diagnostic}
     # Counter for number of peek()s we've done without making progress via a bump()
@@ -691,10 +705,14 @@ function first_child_position(stream::ParseStream, pos::ParseStreamPosition)
 
     if c == 0 || (t != 0 && ranges[c].first_token > t)
         # Return leaf node at `t`
-        return ParseStreamPosition(t, 0)
+        byte_idx = t > 0 ? stream.tokens[t].next_byte : 0
+        return ParseStreamPosition(t, 0, byte_idx, t)
     else
         # Return interior node at `c`
-        return ParseStreamPosition(ranges[c].last_token, c)
+        last_tok = ranges[c].last_token
+        byte_idx = stream.tokens[last_tok].next_byte
+        node_idx = last_tok + c
+        return ParseStreamPosition(last_tok, c, byte_idx, node_idx)
     end
 end
 
@@ -723,10 +741,14 @@ function last_child_position(stream::ParseStream, pos::ParseStreamPosition)
 
     if c == 0 || (t != 0 && ranges[c].last_token < t)
         # Return leaf node at `t`
-        return ParseStreamPosition(t, 0)
+        byte_idx = t > 0 ? stream.tokens[t].next_byte : 0
+        return ParseStreamPosition(t, 0, byte_idx, t)
     else
         # Return interior node at `c`
-        return ParseStreamPosition(ranges[c].last_token, c)
+        last_tok = ranges[c].last_token
+        byte_idx = stream.tokens[last_tok].next_byte
+        node_idx = last_tok + c
+        return ParseStreamPosition(last_tok, c, byte_idx, node_idx)
     end
 end
 
@@ -753,7 +775,9 @@ function peek_behind_pos(stream::ParseStream; skip_trivia::Bool=true,
         end
         token_index -= 1
     end
-    return ParseStreamPosition(token_index, range_index)
+    byte_idx = token_index > 0 ? stream.tokens[token_index].next_byte : 0
+    node_idx = token_index + range_index
+    return ParseStreamPosition(token_index, range_index, byte_idx, node_idx)
 end
 
 function peek_behind(stream::ParseStream; kws...)
@@ -954,7 +978,9 @@ end
 
 # Get position of last item emitted into the output stream
 function Base.position(stream::ParseStream)
-    ParseStreamPosition(lastindex(stream.tokens), lastindex(stream.ranges))
+    byte_idx = isempty(stream.tokens) ? 0 : stream.tokens[end].next_byte
+    node_idx = length(stream.tokens) + length(stream.ranges)
+    ParseStreamPosition(lastindex(stream.tokens), lastindex(stream.ranges), byte_idx, node_idx)
 end
 
 """
@@ -967,7 +993,19 @@ should be a previous return value of `position()`.
 function emit(stream::ParseStream, mark::ParseStreamPosition, kind::Kind,
               flags::RawFlags = EMPTY_FLAGS; error=nothing)
     first_token = mark.token_index + 1
-    range = TaggedRange(SyntaxHead(kind, flags), first_token, length(stream.tokens))
+    last_token = length(stream.tokens)
+
+    # Compute byte span
+    first_byte = first_token > 1 ? stream.tokens[first_token-1].next_byte : 1
+    last_byte = stream.tokens[last_token].next_byte
+    byte_span = last_byte - first_byte
+
+    # Compute node span using the node_index from mark (exclusive of self)
+    # Don't count the range we're about to add
+    current_node_count = length(stream.tokens) + length(stream.ranges)
+    node_span = current_node_count - mark.node_index
+
+    range = TaggedRange(SyntaxHead(kind, flags), first_token, last_token, byte_span, node_span)
     if !isnothing(error)
         # The first child must be a leaf, otherwise ranges would be improperly
         # nested.
