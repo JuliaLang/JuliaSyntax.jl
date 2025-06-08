@@ -45,8 +45,8 @@ const AbstractSyntaxNode = TreeNode{<:AbstractSyntaxData}
 
 struct SyntaxData <: AbstractSyntaxData
     source::SourceFile
-    raw::GreenNode{SyntaxHead}
-    position::Int
+    raw::RawGreenNode
+    byte_end::UInt32
     val::Any
 end
 
@@ -64,41 +64,39 @@ text by calling one of the parser API functions such as [`parseall`](@ref)
 """
 const SyntaxNode = TreeNode{SyntaxData}
 
-function SyntaxNode(source::SourceFile, raw::GreenNode{SyntaxHead};
-                    keep_parens=false, position::Integer=1)
+function SyntaxNode(source::SourceFile, cursor::RedTreeCursor;
+                    keep_parens=false)
     GC.@preserve source begin
         raw_offset, txtbuf = _unsafe_wrap_substring(source.code)
         offset = raw_offset - source.byte_offset
-        _to_SyntaxNode(source, txtbuf, offset, raw, convert(Int, position), keep_parens)
+        _to_SyntaxNode(source, txtbuf, offset, cursor, keep_parens)
     end
 end
 
 function _to_SyntaxNode(source::SourceFile, txtbuf::Vector{UInt8}, offset::Int,
-                        raw::GreenNode{SyntaxHead},
-                        position::Int, keep_parens::Bool)
-    if is_leaf(raw)
+                        cursor::RedTreeCursor, keep_parens::Bool)
+    if is_leaf(cursor)
         # Here we parse the values eagerly rather than representing them as
         # strings. Maybe this is good. Maybe not.
-        valrange = position:position + span(raw) - 1
-        val = parse_julia_literal(txtbuf, head(raw), valrange .+ offset)
-        return SyntaxNode(nothing, nothing, SyntaxData(source, raw, position, val))
+        valrange = byte_range(cursor)
+        val = parse_julia_literal(txtbuf, head(cursor), valrange .+ offset)
+        return SyntaxNode(nothing, nothing, SyntaxData(source, this(cursor.green), cursor.byte_end, val))
     else
         cs = SyntaxNode[]
         pos = position
-        for (i,rawchild) in enumerate(children(raw))
+        for child in reverse(cursor)
             # FIXME: Allowing trivia is_error nodes here corrupts the tree layout.
-            if !is_trivia(rawchild) || is_error(rawchild)
-                push!(cs, _to_SyntaxNode(source, txtbuf, offset, rawchild, pos, keep_parens))
+            if !is_trivia(child) || is_error(child)
+                pushfirst!(cs, _to_SyntaxNode(source, txtbuf, offset, child, keep_parens))
             end
-            pos += Int(rawchild.span)
         end
-        if !keep_parens && kind(raw) == K"parens" && length(cs) == 1
+        if !keep_parens && kind(cursor) == K"parens" && length(cs) == 1
             return cs[1]
         end
-        if kind(raw) == K"wrapper" && length(cs) == 1
+        if kind(cursor) == K"wrapper" && length(cs) == 1
             return cs[1]
         end
-        node = SyntaxNode(nothing, cs, SyntaxData(source, raw, position, nothing))
+        node = SyntaxNode(nothing, cs, SyntaxData(source, this(cursor.green), cursor.byte_end, nothing))
         for c in cs
             c.parent = node
         end
@@ -258,9 +256,8 @@ Base.copy(data::SyntaxData) = SyntaxData(data.source, data.raw, data.position, d
 
 function build_tree(::Type{SyntaxNode}, stream::ParseStream;
                     filename=nothing, first_line=1, keep_parens=false, kws...)
-    green_tree = build_tree(GreenNode, stream; kws...)
     source = SourceFile(stream, filename=filename, first_line=first_line)
-    SyntaxNode(source, green_tree, position=first_byte(stream), keep_parens=keep_parens)
+    SyntaxNode(source, ReadTreeCursor(stream), keep_parens=keep_parens)
 end
 
 @deprecate haschildren(x) !is_leaf(x) false

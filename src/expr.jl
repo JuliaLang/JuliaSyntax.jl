@@ -63,37 +63,6 @@ function _strip_parens(ex)
     end
 end
 
-# Get Julia value of leaf node as it would be represented in `Expr` form
-function _expr_leaf_val(node::SyntaxNode)
-    node.val
-end
-
-function _leaf_to_Expr(source, txtbuf, txtbuf_offset, head, srcrange, node)
-    k = kind(head)
-    if k == K"MacroName" && view(source, srcrange) == "."
-        return Symbol("@__dot__")
-    elseif is_error(k)
-        return k == K"error" ?
-            Expr(:error) :
-            Expr(:error, "$(_token_error_descriptions[k]): `$(source[srcrange])`")
-    else
-        val = isnothing(node) ?
-            parse_julia_literal(txtbuf, head, srcrange .+ txtbuf_offset) :
-            _expr_leaf_val(node)
-        if val isa Union{Int128,UInt128,BigInt}
-            # Ignore the values of large integers and convert them back to
-            # symbolic/textural form for compatibility with the Expr
-            # representation of these.
-            str = replace(source[srcrange], '_'=>"")
-            macname = val isa Int128  ? Symbol("@int128_str")  :
-                      val isa UInt128 ? Symbol("@uint128_str") :
-                      Symbol("@big_str")
-            return Expr(:macrocall, GlobalRef(Core, macname), nothing, str)
-        else
-            return val
-        end
-    end
-end
 
 # Julia string literals in a `K"string"` node may be split into several chunks
 # interspersed with trivia in two situations:
@@ -102,52 +71,76 @@ end
 #
 # This function concatenating adjacent string chunks together as done in the
 # reference parser.
-function _string_to_Expr(args)
+function _string_to_Expr(cursor::RedTreeCursor, source::SourceFile, txtbuf::Vector{UInt8}, txtbuf_offset::UInt32)
+    ret = Expr(:string)
     args2 = Any[]
     i = 1
-    while i <= length(args)
-        if args[i] isa String
-            if i < length(args) && args[i+1] isa String
-                buf = IOBuffer()
-                while i <= length(args) && args[i] isa String
-                    write(buf, args[i]::String)
-                    i += 1
-                end
-                push!(args2, String(take!(buf)))
+    it = Iterators.reverse(cursor)
+    r = iterate(it)
+    while r !== nothing
+        (child, state) = r
+        ex = node_to_expr(child, source, txtbuf, txtbuf_offset)
+        if isa(ex, String)
+            # This branch combines consequent string chunks together.
+            # It's unrolled once to avoid unnecessary allocations.
+            r = iterate(it, state)
+            if r === nothing
+                pushfirst!(ret.args, ex)
+                break
+            end
+            (child, state) = r
+            ex2 = node_to_expr(child, source, txtbuf, txtbuf_offset)
+            if !isa(ex2, String)
+                pushfirst!(ret.args, ex)
+                ex = ex2
             else
-                push!(args2, args[i])
-                i += 1
-            end
-        else
-            ex = args[i]
-            if @isexpr(ex, :parens, 1)
-                ex = _strip_parens(ex)
-                if ex isa String
-                    # Wrap interpolated literal strings in (string) so we can
-                    # distinguish them from the surrounding text (issue #38501)
-                    # Ie, "$("str")"  vs  "str"
-                    # https://github.com/JuliaLang/julia/pull/38692
-                    ex = Expr(:string, ex)
+                strings = String[ex, ex2]
+                r = iterate(it, state)
+                while r !== nothing
+                    (child, state) = r
+                    ex = node_to_expr(child, source, txtbuf, txtbuf_offset)
+                    isa(ex, String) || break
+                    pushfirst!(strings, ex)
+                    r = iterate(it, state)
                 end
+                buf = IOBuffer()
+                for s in strings
+                    write(buf, s)
+                end
+                pushfirst!(ret.args, String(take!(buf)))
+                r === nothing && break
             end
-            push!(args2, ex)
-            i += 1
         end
+        # ex not a string
+        if @isexpr(ex, :parens, 1)
+            ex = _strip_parens(ex)
+            if ex isa String
+                # Wrap interpolated literal strings in (string) so we can
+                # distinguish them from the surrounding text (issue #38501)
+                # Ie, "$("str")"  vs  "str"
+                # https://github.com/JuliaLang/julia/pull/38692
+                ex = Expr(:string, ex)
+            end
+            pushfirst!(ret.args, ex)
+        end
+        r = iterate(it, state)
     end
-    if length(args2) == 1 && args2[1] isa String
+
+    if length(ret.args) == 1 && ret.args[1] isa String
         # If there's a single string remaining after joining, we unwrap
         # to give a string literal.
         #   """\n  a\n  b""" ==>  "a\nb"
-        return only(args2)
+        return only(ret.args)
     else
-        # This only happens when the kind is K"string" or when an error has occurred. 
-        return Expr(:string, args2...)
+        # This only happens when the kind is K"string" or when an error has occurred.
+        return ret
     end
 end
 
 # Shared fixups for Expr children in cases where the type of the parent node
 # affects the child layout.
-function _fixup_Expr_children!(head, loc, args)
+function fixup_Expr_child(head::SyntaxHead, @nospecialize(arg), i=1)
+    isa(arg, Expr) || return arg
     k = kind(head)
     eq_to_kw_in_call = ((k == K"call" || k == K"dotcall") &&
                         is_prefix_call(head)) || k == K"ref"
@@ -155,32 +148,26 @@ function _fixup_Expr_children!(head, loc, args)
                          k != K"braces" && k != K"ref"
     coalesce_dot = k in KSet"call dotcall curly" ||
                    (k == K"quote" && flags(head) == COLON_QUOTE)
-    for i in 1:length(args)
-        arg = args[i]
-        was_parens = @isexpr(arg, :parens)
-        arg = _strip_parens(arg)
-        if @isexpr(arg, :(=)) && eq_to_kw_in_call && i > 1 
-            arg = Expr(:kw, arg.args...)
-        elseif k != K"parens" && @isexpr(arg, :., 1) && arg.args[1] isa Tuple
-            h, a = arg.args[1]::Tuple{SyntaxHead,Any}
-            arg = ((!was_parens && coalesce_dot && i == 1) ||
-                   (k == K"comparison" && iseven(i)) ||
-                   is_syntactic_operator(h)) ?
-                Symbol(".", a) : Expr(:., a)
-        elseif @isexpr(arg, :parameters) && eq_to_kw_in_params
-            pargs = arg.args
-            for j = 1:length(pargs)
-                pj = pargs[j]
-                if @isexpr(pj, :(=))
-                    pargs[j] = Expr(:kw, pj.args...)
-                end
+    was_parens = @isexpr(arg, :parens)
+    arg = _strip_parens(arg)
+    if @isexpr(arg, :(=)) && eq_to_kw_in_call && i > 1
+        arg = Expr(:kw, arg.args...)
+    elseif k != K"parens" && @isexpr(arg, :., 1) && arg.args[1] isa Tuple
+        h, a = arg.args[1]::Tuple{SyntaxHead,Any}
+        arg = ((!was_parens && coalesce_dot && i == 1) ||
+                (k == K"comparison" && iseven(i)) ||
+                is_syntactic_operator(h)) ?
+            Symbol(".", a) : Expr(:., a)
+    elseif @isexpr(arg, :parameters) && eq_to_kw_in_params
+        pargs = arg.args
+        for j = 1:length(pargs)
+            pj = pargs[j]
+            if @isexpr(pj, :(=))
+                pargs[j] = Expr(:kw, pj.args...)
             end
-        elseif k == K"let" && i == 1 && @isexpr(arg, :block)
-            filter!(a -> !(a isa LineNumberNode), arg.args)
         end
-        args[i] = arg
     end
-    return args
+    return arg
 end
 
 # Remove the `do` block from the final position in a function/macro call arg list
@@ -204,48 +191,114 @@ function _append_iterspec!(args, ex)
     return args
 end
 
+function parseargs!(retexpr::Expr, loc::LineNumberNode, cursor::RedTreeCursor, source::SourceFile, txtbuf::Vector{UInt8}, txtbuf_offset::UInt32)
+    args = retexpr.args
+    firstchildhead = head(cursor)
+    firstchildrange = byte_range(cursor)
+    for child in Iterators.reverse(cursor)
+        firstchildhead = head(child)
+        firstchildrange = byte_range(child)
+        expr = node_to_expr(child, source, txtbuf, txtbuf_offset)
+        expr === nothing && continue
+        pushfirst!(args, fixup_Expr_child(head(cursor), expr))
+    end
+    return (firstchildhead, firstchildrange)
+end
+
 # Convert internal node of the JuliaSyntax parse tree to an Expr
-function _internal_node_to_Expr(source, srcrange, head, childranges, childheads, args)
-    k = kind(head)
-    if (k == K"var" || k == K"char") && length(args) == 1
+function node_to_expr(cursor::RedTreeCursor, source::SourceFile, txtbuf::Vector{UInt8}, txtbuf_offset::UInt32=UInt32(0))
+    nodehead = head(cursor)
+    if is_trivia(nodehead) && !is_error(nodehead)
+        return nothing
+    end
+
+    k = kind(cursor)
+    if is_leaf(cursor)
+        srcrange = byte_range(cursor)
+        if k == K"MacroName" && view(source, srcrange) == "."
+            return Symbol("@__dot__")
+        elseif is_error(k)
+            return k == K"error" ?
+                Expr(:error) :
+                Expr(:error, "$(_token_error_descriptions[k]): `$(source[srcrange])`")
+        else
+            val = parse_julia_literal(txtbuf, head(cursor), srcrange .+ txtbuf_offset)
+            if val isa Union{Int128,UInt128,BigInt}
+                # Ignore the values of large integers and convert them back to
+                # symbolic/textural form for compatibility with the Expr
+                # representation of these.
+                str = replace(source[srcrange], '_'=>"")
+                macname = val isa Int128  ? Symbol("@int128_str")  :
+                        val isa UInt128 ? Symbol("@uint128_str") :
+                        Symbol("@big_str")
+                return Expr(:macrocall, GlobalRef(Core, macname), nothing, str)
+            else
+                return val
+            end
+        end
+    end
+
+    if (k == K"var" || k == K"char") && treesize(cursor) == 1
         # Ideally we'd like `@check length(args) == 1` as an invariant for all
         # K"var" and K"char" nodes, but this discounts having embedded error
         # nodes when ignore_errors=true is set.
-        return args[1]
+        return node_to_expr(only(reverse(cursor)), source, txtbuf, txtbuf_offset)
     elseif k == K"string"
-        return _string_to_Expr(args)
+        return _string_to_Expr(cursor, source, txtbuf, txtbuf_offset)
     end
 
+    srcrange = byte_range(cursor)
     loc = source_location(LineNumberNode, source, first(srcrange))
     endloc = source_location(LineNumberNode, source, last(srcrange))
 
     if k == K"cmdstring"
-        return Expr(:macrocall, GlobalRef(Core, Symbol("@cmd")), loc, _string_to_Expr(args))
+        return Expr(:macrocall, GlobalRef(Core, Symbol("@cmd")), loc,
+            _string_to_Expr(cursor, source, txtbuf, txtbuf_offset))
     end
 
-    _fixup_Expr_children!(head, loc, args)
-
-    headstr = untokenize(head, include_flag_suff=false)
+    #_fixup_Expr_children!(head, loc, args)
+    headstr = untokenize(nodehead, include_flag_suff=false)
     headsym = !isnothing(headstr) ?
               Symbol(headstr) :
               error("Can't untokenize head of kind $(k)")
+    retexpr = Expr(headsym)
+    args = retexpr.args
+
+    # Block gets special handling for extra line number nodes
+    if k == K"block" || (k == K"toplevel" && !has_flags(nodehead, TOPLEVEL_SEMICOLONS_FLAG))
+        args = retexpr.args
+        for child in Iterators.reverse(cursor)
+            expr = node_to_expr(child, source, txtbuf, txtbuf_offset)
+            expr === nothing && continue
+            pushfirst!(args, fixup_Expr_child(head(cursor), expr))
+            pushfirst!(args, source_location(LineNumberNode, source, first(byte_range(child))))
+        end
+        isempty(args) && push!(args, loc)
+        if k == K"block" && has_flags(nodehead, PARENS_FLAG)
+            popfirst!(args)
+        end
+        return retexpr
+    end
+
+    # Now recurse to parse all arguments
+    (firstchildhead, firstchildrange) = parseargs!(retexpr, loc, cursor, source, txtbuf, txtbuf_offset)
 
     if k == K"?"
-        headsym = :if
+        retexpr.head = :if
     elseif k == K"op=" && length(args) == 3
         lhs = args[1]
         op = args[2]
         rhs = args[3]
         headstr = string(args[2], '=')
-        if is_dotted(head)
+        if is_dotted(nodehead)
             headstr = '.'*headstr
         end
-        headsym = Symbol(headstr)
+        retexpr.head = Symbol(headstr)
         args = Any[lhs, rhs]
     elseif k == K"macrocall"
         if length(args) >= 2
             a2 = args[2]
-            if @isexpr(a2, :macrocall) && kind(childheads[1]) == K"CmdMacroName"
+            if @isexpr(a2, :macrocall) && kind(firstchildhead) == K"CmdMacroName"
                 # Fix up for custom cmd macros like foo`x`
                 args[2] = a2.args[3]
             end
@@ -254,54 +307,41 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         _reorder_parameters!(args, 2)
         insert!(args, 2, loc)
         if do_lambda isa Expr
-            return Expr(:do, Expr(headsym, args...), do_lambda)
-        end
-    elseif k == K"block" || (k == K"toplevel" && !has_flags(head, TOPLEVEL_SEMICOLONS_FLAG))
-        if isempty(args)
-            push!(args, loc)
-        else
-            resize!(args, 2*length(args))
-            for i = length(childranges):-1:1
-                args[2*i] = args[i]
-                args[2*i-1] = source_location(LineNumberNode, source, first(childranges[i]))
-            end
-        end
-        if k == K"block" && has_flags(head, PARENS_FLAG)
-            popfirst!(args)
+            return Expr(:do, retexpr, do_lambda)
         end
     elseif k == K"doc"
-        headsym = :macrocall
+        retexpr.head = :macrocall
         args = [GlobalRef(Core, Symbol("@doc")), loc, args...]
     elseif k == K"dotcall" || k == K"call"
         # Julia's standard `Expr` ASTs have children stored in a canonical
         # order which is often not always source order. We permute the children
         # here as necessary to get the canonical order.
-        if is_infix_op_call(head) || is_postfix_op_call(head)
+        if is_infix_op_call(nodehead) || is_postfix_op_call(nodehead)
             args[2], args[1] = args[1], args[2]
         end
         # Lower (call x ') to special ' head
-        if is_postfix_op_call(head) && args[1] == Symbol("'")
+        if is_postfix_op_call(nodehead) && args[1] == Symbol("'")
             popfirst!(args)
-            headsym = Symbol("'")
+            retexpr.head = headsym = Symbol("'")
         end
         do_lambda = _extract_do_lambda!(args)
         # Move parameters blocks to args[2]
         _reorder_parameters!(args, 2)
         if headsym === :dotcall
             funcname = args[1]
-            if is_prefix_call(head)
-                headsym = :.
+            if is_prefix_call(nodehead)
+                retexpr.head = :.
                 args = Any[funcname, Expr(:tuple, args[2:end]...)]
             else
                 # operator calls
-                headsym = :call
+                retexpr.head = :call
                 if funcname isa Symbol
                     args[1] = Symbol(:., funcname)
                 end # else funcname could be an Expr(:error), just propagate it
             end
         end
         if do_lambda isa Expr
-            return Expr(:do, Expr(headsym, args...), do_lambda)
+            return Expr(:do, retexpr, do_lambda)
         end
     elseif k == K"."
         if length(args) == 2
@@ -312,7 +352,7 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         elseif length(args) == 1
             # Hack: Here we preserve the head of the operator to determine whether
             # we need to coalesce it with the dot into a single symbol later on.
-            args[1] = (childheads[1], args[1])
+            args[1] = (firstchildhead, args[1])
         end
     elseif k == K"ref" || k == K"curly"
         # Move parameters blocks to args[2]
@@ -337,10 +377,6 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
                 _reorder_parameters!(a2a, 2)
                 args = Any[args[1], a2a...]
             end
-        end
-    elseif k == K"catch"
-        if kind(childheads[1]) == K"Placeholder"
-            args[1] = false
         end
     elseif k == K"try"
         # Try children in source order:
@@ -367,7 +403,8 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
                 @assert false "Illegal $a subclause in `try`"
             end
         end
-        args = Any[try_, catch_var, catch_]
+        empty!(args)
+        push!(args, try_, catch_var, catch_)
         if finally_ !== false || else_ !== false
             push!(args, finally_)
             if else_ !== false
@@ -406,8 +443,8 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
             # compatibility. We should consider deleting this special case in
             # the future as a minor change.
             if length(a1.args) == 1 &&
-                    (!has_flags(childheads[1], PARENS_FLAG) ||
-                     !has_flags(childheads[1], TRAILING_COMMA_FLAG)) &&
+                    (!has_flags(firstchildhead, PARENS_FLAG) ||
+                     !has_flags(firstchildhead, TRAILING_COMMA_FLAG)) &&
                     !Meta.isexpr(a1.args[1], :parameters)
                 # `(a) -> c` is parsed without tuple on lhs in Expr form
                 args[1] = a1.args[1]
@@ -419,7 +456,7 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
                 else
                     a111 = only(a11.args)
                     assgn = @isexpr(a111, :kw) ? Expr(:(=), a111.args...) : a111
-                    argloc = source_location(LineNumberNode, source, last(childranges[1]))
+                    argloc = source_location(LineNumberNode, source, last(firstchildrange))
                     args[1] = Expr(:block, a1.args[2], argloc, assgn)
                 end
             end
@@ -433,12 +470,12 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         end
     elseif k == K"function"
         if length(args) > 1
-            if has_flags(head, SHORT_FORM_FUNCTION_FLAG)
+            if has_flags(nodehead, SHORT_FORM_FUNCTION_FLAG)
                 a2 = args[2]
                 if !@isexpr(a2, :block)
                     args[2] = Expr(:block, a2)
                 end
-                headsym = :(=)
+                retexpr.head = :(=)
             else
                 a1 = args[1]
                 if @isexpr(a1, :tuple)
@@ -451,14 +488,16 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
                     end
                 end
             end
-            pushfirst!((args[2]::Expr).args, loc)
+            arg2 = args[2]
+            # Only push if this is an Expr - could be an ErrorVal
+            isa(arg2, Expr) && pushfirst!(arg2.args, loc)
         end
     elseif k == K"macro"
         if length(args) > 1
             pushfirst!((args[2]::Expr).args, loc)
         end
     elseif k == K"module"
-        pushfirst!(args, !has_flags(head, BARE_MODULE_FLAG))
+        pushfirst!(args, !has_flags(nodehead, BARE_MODULE_FLAG))
         pushfirst!((args[3]::Expr).args, loc)
     elseif k == K"inert"
         return QuoteNode(only(args))
@@ -471,11 +510,12 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
         end
     elseif k == K"do"
         # Temporary head which is picked up by _extract_do_lambda
-        headsym = :do_lambda
+        retexpr.head = :do_lambda
     elseif k == K"let"
         a1 = args[1]
         if @isexpr(a1, :block)
             a1a = (args[1]::Expr).args
+            filter!(a -> !(a isa LineNumberNode), a1a)
             # Ugly logic to strip the Expr(:block) in certain cases for compatibility
             if length(a1a) == 1
                 a = a1a[1]
@@ -490,7 +530,7 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
             if @isexpr(a1, :const)
                 # Normalize `local const` to `const local`
                 args[1] = Expr(headsym, (a1::Expr).args...)
-                headsym = :const
+                retexpr.head = :const
             elseif @isexpr(a1, :tuple)
                 # Normalize `global (x, y)` to `global x, y`
                 args = a1.args
@@ -499,7 +539,7 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
     elseif k == K"return" && isempty(args)
         push!(args, nothing)
     elseif k == K"juxtapose"
-        headsym = :call
+        retexpr.head = :call
         pushfirst!(args, :*)
     elseif k == K"struct"
         @assert args[2].head == :block
@@ -515,9 +555,9 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
             end
         end
         args[2] = fields
-        pushfirst!(args, has_flags(head, MUTABLE_FLAG))
+        pushfirst!(args, has_flags(nodehead, MUTABLE_FLAG))
     elseif k == K"importpath"
-        headsym = :.
+        retexpr.head = :.
         for i = 1:length(args)
             ai = args[i]
             if ai isa QuoteNode
@@ -529,10 +569,10 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
     elseif k == K"wrapper"
         # This should only happen for errors wrapped next to what should have
         # been single statements or atoms - represent these as blocks.
-        headsym = :block
+        retexpr.head = :block
     end
 
-    return Expr(headsym, args...)
+    return retexpr
 end
 
 
@@ -550,31 +590,10 @@ function build_tree(::Type{Expr}, stream::ParseStream;
                     filename=nothing, first_line=1, kws...)
     source = SourceFile(stream, filename=filename, first_line=first_line)
     txtbuf = unsafe_textbuf(stream)
-    args = Any[]
-    childranges = UnitRange{Int}[]
-    childheads = SyntaxHead[]
-    entry = build_tree(_BuildExprStackEntry, stream; kws...) do head, srcrange, nodechildren
-        if is_trivia(head) && !is_error(head)
-            return nothing
-        end
-        k = kind(head)
-        if isnothing(nodechildren)
-            ex = _leaf_to_Expr(source, txtbuf, 0, head, srcrange, nothing)
-        else
-            resize!(childranges, length(nodechildren))
-            resize!(childheads, length(nodechildren))
-            resize!(args, length(nodechildren))
-            for (i,c) in enumerate(nodechildren)
-                childranges[i] = c.srcrange
-                childheads[i] = c.head
-                args[i] = c.ex
-            end
-            ex = _internal_node_to_Expr(source, srcrange, head, childranges, childheads, args)
-        end
-        return _BuildExprStackEntry(srcrange, head, ex)
-    end
-    loc = source_location(LineNumberNode, source, first(entry.srcrange))
-    only(_fixup_Expr_children!(SyntaxHead(K"None",EMPTY_FLAGS), loc, Any[entry.ex]))
+    cursor = RedTreeCursor(stream)
+    entry = node_to_expr(cursor, source, txtbuf)
+    loc = source_location(LineNumberNode, source, first(byte_range(cursor)))
+    fixup_Expr_child(SyntaxHead(K"None",EMPTY_FLAGS), entry)
 end
 
 function _to_expr(node)
@@ -594,7 +613,8 @@ function to_expr(node)
     only(_fixup_Expr_children!(SyntaxHead(K"None",EMPTY_FLAGS), loc, Any[ex]))
 end
 
+#=
 function Base.Expr(node::SyntaxNode)
     to_expr(node)
 end
-
+=#

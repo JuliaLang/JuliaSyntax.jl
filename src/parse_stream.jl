@@ -287,9 +287,28 @@ preceding_whitespace(tok::SyntaxToken) = tok.preceding_whitespace
 #-------------------------------------------------------------------------------
 
 """
-Range in the source text which will become a node in the tree. Can be either a
-token (leaf node of the tree) or an interior node, depending on how the
-start_mark compares to previous nodes.
+    RawGreenNode(head::SyntaxHead, byte_span::UInt32, orig_kind::Kind) # Terminal
+    RawGreenNode(head::SyntaxHead, byte_span::UInt32, nchildren::UInt32) # Non-terminal
+
+A "green tree" is a lossless syntax tree which overlays all the source text.
+The most basic properties of a green tree are that:
+
+* Nodes cover a contiguous span of bytes in the text
+* Sibling nodes are ordered in the same order as the text
+
+As implementation choices, we choose that:
+
+* Nodes are immutable and don't know their parents or absolute position, so can
+  be cached and reused
+* Nodes are homogeneously typed at the language level so they can be stored
+  concretely, with the `head` defining the node type. Normally this would
+  include a "syntax kind" enumeration, but it can also include flags and record
+  information the parser knew about the layout of the child nodes.
+* For simplicity and uniformity, leaf nodes cover a single token in the source.
+  This is like rust-analyzer, but different from Roslyn where leaves can
+  include syntax trivia.
+* The parser produces a single buffer of `RawGreenNode` which encodes the tree.
+  There are higher level accessors, which make working with this tree easier.
 """
 struct RawGreenNode
     head::SyntaxHead                  # Kind,flags
@@ -299,28 +318,50 @@ struct RawGreenNode
     node_span_or_orig_kind::UInt32
 end
 
+# Constructor for terminal nodes (tokens)
+function RawGreenNode(head::SyntaxHead, byte_span::Integer, orig_kind::Kind)
+    RawGreenNode(head, UInt32(byte_span), UInt32(reinterpret(UInt16, orig_kind)))
+end
+
+# Constructor for non-terminal nodes - automatically sets NON_TERMINAL_FLAG
+function RawGreenNode(head::SyntaxHead, byte_span::Integer, node_span::Integer)
+    h = SyntaxHead(kind(head), flags(head) | NON_TERMINAL_FLAG)
+    RawGreenNode(h, UInt32(byte_span), UInt32(node_span))
+end
+
+Base.summary(node::RawGreenNode) = summary(node.head)
+
 function Base.getproperty(rgn::RawGreenNode, name::Symbol)
-    if name == :node_span
-        has_flags(rgn.head, NON_TERMINAL_FLAG) || return 0 # Leaf nodes have no children
-        name = :node_span_or_orig_kind
-    elseif name == :orig_kind
+    if name === :node_span
+        has_flags(rgn.head, NON_TERMINAL_FLAG) || return UInt32(0) # Leaf nodes have no children
+        return getfield(rgn, :node_span_or_orig_kind)
+    elseif name === :orig_kind
         has_flags(rgn.head, NON_TERMINAL_FLAG) && error("Cannot access orig_kind for non-terminal node")
-        name = :node_span_or_orig_kind
+        return Kind(getfield(rgn, :node_span_or_orig_kind))
     end
     getfield(rgn, name)
 end
 
 head(range::RawGreenNode) = range.head
 
+# Helper functions for unified output
+is_terminal(node::RawGreenNode) = !has_flags(node.head, NON_TERMINAL_FLAG)
+is_non_terminal(node::RawGreenNode) = has_flags(node.head, NON_TERMINAL_FLAG)
+
 #-------------------------------------------------------------------------------
 struct ParseStreamPosition
-    token_index::UInt32  # Index of last token in output
-    range_index::UInt32
-    byte_index::UInt32   # Current byte position in stream
-    node_index::UInt32   # Total number of nodes (tokens + ranges) emitted
+    """
+    The current position in the byte stream, i.e. the byte at `byte_index` is
+    the first byte of the next token to be parsed.
+    """
+    byte_index::UInt32
+    """
+    The total number of nodes (terminal + non-terminal) in the output so far.
+    """
+    node_index::UInt32
 end
 
-const NO_POSITION = ParseStreamPosition(0, 0, 0, 0)
+const NO_POSITION = ParseStreamPosition(0, 0)
 
 #-------------------------------------------------------------------------------
 """
@@ -367,6 +408,8 @@ mutable struct ParseStream
     # Pool of stream positions for use as working space in parsing
     position_pool::Vector{Vector{ParseStreamPosition}}
     output::Vector{RawGreenNode}
+    # Current byte position in the output (the next byte to be written)
+    next_byte::Int
     # Parsing diagnostics (errors/warnings etc)
     diagnostics::Vector{Diagnostic}
     # Counter for number of peek()s we've done without making progress via a bump()
@@ -386,17 +429,16 @@ mutable struct ParseStream
         # numbers. This means we're inexact for old dev versions but that seems
         # like an acceptable tradeoff.
         ver = (version.major, version.minor)
-        # Initial sentinel token containing the first byte of the first real token.
-        sentinel = SyntaxToken(SyntaxHead(K"TOMBSTONE", EMPTY_FLAGS),
-                               K"TOMBSTONE", false, next_byte)
+        # Initial sentinel node containing the first byte of the first real token.
+        sentinel = RawGreenNode(SyntaxHead(K"TOMBSTONE", EMPTY_FLAGS), 0, K"TOMBSTONE")
         new(text_buf,
             text_root,
             lexer,
             Vector{SyntaxToken}(),
             1,
             Vector{Vector{ParseStreamPosition}}(),
-            SyntaxToken[sentinel],
-            Vector{TaggedRange}(),
+            RawGreenNode[sentinel],
+            next_byte,  # Initialize next_byte from the parameter
             Vector{Diagnostic}(),
             0,
             ver)
@@ -441,7 +483,7 @@ function ParseStream(io::IO; version=VERSION)
 end
 
 function Base.show(io::IO, mime::MIME"text/plain", stream::ParseStream)
-    println(io, "ParseStream at position $(_next_byte(stream))")
+    println(io, "ParseStream at position $(stream.next_byte)")
 end
 
 function show_diagnostics(io::IO, stream::ParseStream)
@@ -462,19 +504,11 @@ function release_positions(stream, positions)
 end
 
 #-------------------------------------------------------------------------------
-# Return true when a token was emitted last at stream position `pos`
+# Return true when a terminal (token) was emitted last at stream position `pos`
 function token_is_last(stream, pos)
-    return pos.range_index == 0 ||
-           pos.token_index > stream.ranges[pos.range_index].last_token
-end
-
-# Compute the first byte of a token at given index `i`
-function token_first_byte(stream, i)
-    stream.tokens[i-1].next_byte
-end
-
-function token_last_byte(stream::ParseStream, i)
-    stream.tokens[i].next_byte - 1
+    # In the unified structure, check if the node at pos is a terminal
+    return pos.node_index > 0 && pos.node_index <= length(stream.output) &&
+           is_terminal(stream.output[pos.node_index])
 end
 
 function lookahead_token_first_byte(stream, i)
@@ -521,7 +555,7 @@ end
 
 # Return the index of the next byte of the input
 function _next_byte(stream)
-    last(stream.tokens).next_byte
+    stream.next_byte
 end
 
 # Find the index of the next nontrivia token
@@ -585,7 +619,7 @@ end
 
 @noinline function _parser_stuck_error(stream)
     # Optimization: emit unlikely errors in a separate function
-    error("The parser seems stuck at byte $(_next_byte(stream))")
+    error("The parser seems stuck at byte $(stream.next_byte)")
 end
 
 """
@@ -658,18 +692,19 @@ Retroactively inspecting or modifying the parser's output can be confusing, so
 using this function should be avoided where possible.
 """
 function peek_behind(stream::ParseStream, pos::ParseStreamPosition)
-    if token_is_last(stream, pos) && pos.token_index > 0
-        t = stream.tokens[pos.token_index]
-        return (kind=kind(t),
-                flags=flags(t),
-                orig_kind=t.orig_kind,
-                is_leaf=true)
-    elseif !isempty(stream.ranges) && pos.range_index > 0
-        r = stream.ranges[pos.range_index]
-        return (kind=kind(r),
-                flags=flags(r),
-                orig_kind=K"None",
-                is_leaf=false)
+    if pos.node_index > 0 && pos.node_index <= length(stream.output)
+        node = stream.output[pos.node_index]
+        if is_terminal(node)
+            return (kind=kind(node),
+                    flags=flags(node),
+                    orig_kind=node.orig_kind,
+                    is_leaf=true)
+        else
+            return (kind=kind(node),
+                    flags=flags(node),
+                    orig_kind=K"None",
+                    is_leaf=false)
+        end
     else
         return (kind=K"None",
                 flags=EMPTY_FLAGS,
@@ -678,78 +713,42 @@ function peek_behind(stream::ParseStream, pos::ParseStreamPosition)
     end
 end
 
+"""
+    first_child_position(stream::ParseStream, pos::ParseStreamPosition)
+
+Find the first non-trivia child of this node (in the GreenTree/RedTree sense) and return
+its position.
+"""
 function first_child_position(stream::ParseStream, pos::ParseStreamPosition)
-    ranges = stream.ranges
-    @assert pos.range_index > 0
-    parent = ranges[pos.range_index]
-    # Find the first nontrivia range which is a child of this range but not a
-    # child of the child
-    c = 0
-    for i = pos.range_index-1:-1:1
-        if ranges[i].first_token < parent.first_token
-            break
-        end
-        if (c == 0 || ranges[i].first_token < ranges[c].first_token) && !is_trivia(ranges[i])
-            c = i
-        end
+    output = stream.output
+    @assert pos.node_index > 0
+    cursor = RedTreeCursor(GreenTreeCursor(output, pos.node_index), pos.byte_index-UInt32(1))
+    candidate = nothing
+    for child in reverse(cursor)
+        is_trivia(child) && continue
+        candidate = child
     end
 
-    # Find first nontrivia token
-    t = 0
-    for i = parent.first_token:parent.last_token
-        if !is_trivia(stream.tokens[i])
-            t = i
-            break
-        end
-    end
-
-    if c == 0 || (t != 0 && ranges[c].first_token > t)
-        # Return leaf node at `t`
-        byte_idx = t > 0 ? stream.tokens[t].next_byte : 0
-        return ParseStreamPosition(t, 0, byte_idx, t)
-    else
-        # Return interior node at `c`
-        last_tok = ranges[c].last_token
-        byte_idx = stream.tokens[last_tok].next_byte
-        node_idx = last_tok + c
-        return ParseStreamPosition(last_tok, c, byte_idx, node_idx)
-    end
+    return ParseStreamPosition(candidate.byte_end+UInt32(1), candidate.green.position)
 end
 
+
+"""
+        first_child_position(stream::ParseStream, pos::ParseStreamPosition)
+
+    Find the last non-trivia child of this node (in the GreenTree/RedTree sense) and
+    return its position (i.e. the position as if that child had been the last thing parsed).
+"""
 function last_child_position(stream::ParseStream, pos::ParseStreamPosition)
-    ranges = stream.ranges
-    @assert pos.range_index > 0
-    parent = ranges[pos.range_index]
-    # Find the last nontrivia range which is a child of this range
-    c = 0
-    if pos.range_index > 1
-        i = pos.range_index-1
-        if ranges[i].first_token >= parent.first_token
-            # Valid child of current range
-            c = i
-        end
+    output = stream.output
+    @assert pos.node_index > 0
+    cursor = RedTreeCursor(GreenTreeCursor(output, pos.node_index), pos.byte_index-1)
+    candidate = nothing
+    for child in reverse(cursor)
+        is_trivia(child) && continue
+        return ParseStreamPosition(child.byte_end+UInt32(1), child.green.position)
     end
-
-    # Find last nontrivia token
-    t = 0
-    for i = parent.last_token:-1:parent.first_token
-        if !is_trivia(stream.tokens[i])
-            t = i
-            break
-        end
-    end
-
-    if c == 0 || (t != 0 && ranges[c].last_token < t)
-        # Return leaf node at `t`
-        byte_idx = t > 0 ? stream.tokens[t].next_byte : 0
-        return ParseStreamPosition(t, 0, byte_idx, t)
-    else
-        # Return interior node at `c`
-        last_tok = ranges[c].last_token
-        byte_idx = stream.tokens[last_tok].next_byte
-        node_idx = last_tok + c
-        return ParseStreamPosition(last_tok, c, byte_idx, node_idx)
-    end
+    error("No children")
 end
 
 # Get last position in stream "of interest", skipping
@@ -758,26 +757,34 @@ end
 # * whitespace (if skip_trivia=true)
 function peek_behind_pos(stream::ParseStream; skip_trivia::Bool=true,
                          skip_parens::Bool=true)
-    token_index = lastindex(stream.tokens)
-    range_index = lastindex(stream.ranges)
+    # Work backwards through the output
+    node_idx = length(stream.output)
+    byte_idx = stream.next_byte
+
+    # Skip parens nodes if requested
     if skip_parens
-        while range_index >= firstindex(stream.ranges) &&
-                kind(stream.ranges[range_index]) == K"parens"
-            range_index -= 1
+        while node_idx > 0
+            node = stream.output[node_idx]
+            if is_non_terminal(node) && kind(node) == K"parens"
+                node_idx -= 1
+            else
+                break
+            end
         end
     end
-    last_token_in_nonterminal = range_index == 0 ? 0 :
-                                stream.ranges[range_index].last_token
-    while token_index > last_token_in_nonterminal
-        t = stream.tokens[token_index]
-        if kind(t) != K"TOMBSTONE" && (!skip_trivia || !is_trivia(t))
+
+    # Skip trivia if requested
+    while node_idx > 0
+        node = stream.output[node_idx]
+        if kind(node) == K"TOMBSTONE" || (skip_trivia && is_trivia(node))
+            node_idx -= 1
+            byte_idx -= node.byte_span
+        else
             break
         end
-        token_index -= 1
     end
-    byte_idx = token_index > 0 ? stream.tokens[token_index].next_byte : 0
-    node_idx = token_index + range_index
-    return ParseStreamPosition(token_index, range_index, byte_idx, node_idx)
+
+    return ParseStreamPosition(byte_idx, node_idx)
 end
 
 function peek_behind(stream::ParseStream; kws...)
@@ -806,8 +813,23 @@ function _bump_until_n(stream::ParseStream, n::Integer, flags, remap_kind=K"None
         is_trivia && (f |= TRIVIA_FLAG)
         outk = (is_trivia || remap_kind == K"None") ? k : remap_kind
         h = SyntaxHead(outk, f)
-        push!(stream.tokens,
-              SyntaxToken(h, kind(tok), tok.preceding_whitespace, tok.next_byte))
+
+        # Calculate byte span for this token
+        if i == stream.lookahead_index
+            # First token in this batch - calculate span from current stream position
+            prev_byte = _next_byte(stream)
+        else
+            # Subsequent tokens - use previous token's next_byte
+            prev_byte = stream.lookahead[i-1].next_byte
+        end
+        byte_span = Int(tok.next_byte) - Int(prev_byte)
+
+        # Create terminal RawGreenNode
+        node = RawGreenNode(h, byte_span, kind(tok))
+        push!(stream.output, node)
+
+        # Update next_byte
+        stream.next_byte += byte_span
     end
     stream.lookahead_index = n + 1
     # Defuse the time bomb
@@ -862,9 +884,12 @@ example, `2x` means `2*x` via the juxtaposition rules.
 """
 function bump_invisible(stream::ParseStream, kind, flags=EMPTY_FLAGS;
                         error=nothing)
-    b = _next_byte(stream)
+    b = stream.next_byte
     h = SyntaxHead(kind, flags)
-    push!(stream.tokens, SyntaxToken(h, (@__MODULE__).kind(h), false, b))
+    # Zero-width token
+    node = RawGreenNode(h, 0, kind)
+    push!(stream.output, node)
+    # No need to update next_byte for zero-width token
     if !isnothing(error)
         emit_diagnostic(stream, b:b-1, error=error)
     end
@@ -882,8 +907,14 @@ whitespace if necessary with bump_trivia.
 function bump_glue(stream::ParseStream, kind, flags)
     i = stream.lookahead_index
     h = SyntaxHead(kind, flags)
-    push!(stream.tokens, SyntaxToken(h, kind, false,
-                                     stream.lookahead[i+1].next_byte))
+    # Calculate byte span for glued tokens
+    start_byte = stream.next_byte
+    end_byte = stream.lookahead[i+1].next_byte
+    byte_span = end_byte - start_byte
+
+    node = RawGreenNode(h, byte_span, kind)
+    push!(stream.output, node)
+    stream.next_byte += byte_span
     stream.lookahead_index += 2
     stream.peek_count = 0
     return position(stream)
@@ -911,15 +942,19 @@ simpler one which only splits preceding dots?
 function bump_split(stream::ParseStream, split_spec::Vararg{Any, N}) where {N}
     tok = stream.lookahead[stream.lookahead_index]
     stream.lookahead_index += 1
-    b = _next_byte(stream)
-    toklen = tok.next_byte - b
+    start_b = _next_byte(stream)
+    toklen = tok.next_byte - start_b
+    prev_b = start_b
     for (i, (nbyte, k, f)) in enumerate(split_spec)
         h = SyntaxHead(k, f)
-        b += nbyte < 0 ? (toklen + nbyte) : nbyte
+        actual_nbyte = nbyte < 0 ? (toklen + nbyte) : nbyte
         orig_k = k == K"." ? K"." : kind(tok)
-        push!(stream.tokens, SyntaxToken(h, orig_k, false, b))
+        node = RawGreenNode(h, actual_nbyte, orig_k)
+        push!(stream.output, node)
+        prev_b += actual_nbyte
+        stream.next_byte += actual_nbyte
     end
-    @assert tok.next_byte == b
+    @assert tok.next_byte == prev_b
     stream.peek_count = 0
     return position(stream)
 end
@@ -939,16 +974,10 @@ in those cases.
 """
 function reset_node!(stream::ParseStream, pos::ParseStreamPosition;
                      kind=nothing, flags=nothing)
-    if token_is_last(stream, pos)
-        t = stream.tokens[pos.token_index]
-        stream.tokens[pos.token_index] =
-            SyntaxToken(_reset_node_head(t, kind, flags),
-                        t.orig_kind, t.preceding_whitespace, t.next_byte)
-    else
-        r = stream.ranges[pos.range_index]
-        stream.ranges[pos.range_index] =
-            TaggedRange(_reset_node_head(r, kind, flags),
-                        r.first_token, r.last_token)
+    if pos.node_index > 0 && pos.node_index <= length(stream.output)
+        node = stream.output[pos.node_index]
+        new_head = _reset_node_head(node, kind, flags)
+        stream.output[pos.node_index] = RawGreenNode(new_head, node.byte_span, node.node_span_or_orig_kind)
     end
 end
 
@@ -961,26 +990,27 @@ Hack alert! This is used only for managing the complicated rules related to
 dedenting triple quoted strings.
 """
 function steal_token_bytes!(stream::ParseStream, pos::ParseStreamPosition, numbytes)
-    i = pos.token_index
-    t1 = stream.tokens[i]
-    t2 = stream.tokens[i+1]
+    i = pos.node_index
+    t1 = stream.output[i]
+    t2 = stream.output[i+1]
+    @assert is_terminal(t1) && is_terminal(t2)
 
-    t1_next_byte = t1.next_byte + numbytes
-    stream.tokens[i] = SyntaxToken(t1.head, t1.orig_kind,
-                                   t1.preceding_whitespace, t1_next_byte)
+    stream.output[i] = RawGreenNode(t1.head, t1.byte_span + numbytes,
+                                    t1.orig_kind)
 
-    t2_is_empty = t1_next_byte == t2.next_byte
+    t2_is_empty = t2.byte_span == numbytes
     head2 = t2_is_empty ? SyntaxHead(K"TOMBSTONE", EMPTY_FLAGS) : t2.head
-    stream.tokens[i+1] = SyntaxToken(head2, t2.orig_kind,
-                                     t2.preceding_whitespace, t2.next_byte)
+    stream.output[i+1] = RawGreenNode(head2, t2.byte_span - numbytes,
+                                      t2.orig_kind)
     return t2_is_empty
 end
 
 # Get position of last item emitted into the output stream
 function Base.position(stream::ParseStream)
-    byte_idx = isempty(stream.tokens) ? 0 : stream.tokens[end].next_byte
-    node_idx = length(stream.tokens) + length(stream.ranges)
-    ParseStreamPosition(lastindex(stream.tokens), lastindex(stream.ranges), byte_idx, node_idx)
+    byte_idx = stream.next_byte
+    node_idx = length(stream.output)
+
+    ParseStreamPosition(byte_idx, node_idx)
 end
 
 """
@@ -992,28 +1022,24 @@ should be a previous return value of `position()`.
 """
 function emit(stream::ParseStream, mark::ParseStreamPosition, kind::Kind,
               flags::RawFlags = EMPTY_FLAGS; error=nothing)
-    first_token = mark.token_index + 1
-    last_token = length(stream.tokens)
+    # Calculate byte span from mark position to current
+    mark_byte = mark.byte_index
+    current_byte = stream.next_byte
+    byte_span = current_byte - mark_byte
 
-    # Compute byte span
-    first_byte = first_token > 1 ? stream.tokens[first_token-1].next_byte : 1
-    last_byte = stream.tokens[last_token].next_byte
-    byte_span = last_byte - first_byte
+    # Calculate node span (number of children, exclusive of the node itself)
+    node_span = length(stream.output) - mark.node_index
 
-    # Compute node span using the node_index from mark (exclusive of self)
-    # Don't count the range we're about to add
-    current_node_count = length(stream.tokens) + length(stream.ranges)
-    node_span = current_node_count - mark.node_index
+    # Create non-terminal RawGreenNode
+    node = RawGreenNode(SyntaxHead(kind, flags), byte_span, node_span)
 
-    range = TaggedRange(SyntaxHead(kind, flags), first_token, last_token, byte_span, node_span)
     if !isnothing(error)
-        # The first child must be a leaf, otherwise ranges would be improperly
-        # nested.
-        fbyte = token_first_byte(stream, first_token)
-        lbyte = token_last_byte(stream, lastindex(stream.tokens))
-        emit_diagnostic(stream, fbyte:lbyte, error=error)
+        emit_diagnostic(stream, mark_byte:current_byte-1, error=error)
     end
-    push!(stream.ranges, range)
+
+    push!(stream.output, node)
+    # Note: emit() for non-terminals doesn't advance next_byte
+    # because it's a range over already-emitted tokens
     return position(stream)
 end
 
@@ -1046,25 +1072,21 @@ function emit_diagnostic(stream::ParseStream; whitespace=false, kws...)
 end
 
 function emit_diagnostic(stream::ParseStream, mark::ParseStreamPosition; trim_whitespace=true, kws...)
-    i = mark.token_index
-    j = lastindex(stream.tokens)
+    # Find the byte range from mark to current position
+    start_byte = mark.byte_index
+    end_byte = stream.next_byte - 1
+
     if trim_whitespace
-        while i < j && is_whitespace(stream.tokens[j])
-            j -= 1
-        end
-        while i+1 < j && is_whitespace(stream.tokens[i+1])
-            i += 1
-        end
+        # TODO: Implement whitespace trimming for unified output
+        # This would require scanning the output array
     end
-    byterange = stream.tokens[i].next_byte:stream.tokens[j].next_byte-1
-    emit_diagnostic(stream, byterange; kws...)
+
+    emit_diagnostic(stream, start_byte:end_byte; kws...)
 end
 
 function emit_diagnostic(stream::ParseStream, mark::ParseStreamPosition,
                          end_mark::ParseStreamPosition; kws...)
-    fbyte = stream.tokens[mark.token_index].next_byte
-    lbyte = stream.tokens[end_mark.token_index].next_byte-1
-    emit_diagnostic(stream, fbyte:lbyte; kws...)
+    emit_diagnostic(stream, mark.byte_index:end_mark.byte_index-1; kws...)
 end
 
 function emit_diagnostic(diagnostics::AbstractVector{Diagnostic},
@@ -1077,15 +1099,20 @@ end
 
 function validate_tokens(stream::ParseStream)
     txtbuf = unsafe_textbuf(stream)
-    toks = stream.tokens
     charbuf = IOBuffer()
-    for i = 2:length(toks)
-        t = toks[i]
-        k = kind(t)
-        fbyte = toks[i-1].next_byte
-        nbyte = t.next_byte
+
+    # Process terminal nodes in the output
+    fbyte = 1  # Start after sentinel
+    for (i, node) in enumerate(stream.output)
+        if !is_terminal(node) || kind(node) == K"TOMBSTONE"
+            continue
+        end
+
+        k = kind(node)
+        nbyte = fbyte + node.byte_span
         tokrange = fbyte:nbyte-1
         error_kind = K"None"
+
         if k in KSet"Integer BinInt OctInt HexInt"
             # The following shouldn't be able to error...
             # parse_int_literal
@@ -1128,7 +1155,7 @@ function validate_tokens(stream::ParseStream)
                                     error="character literal contains multiple characters")
                 end
             end
-        elseif k == K"String" && !has_flags(t, RAW_STRING_FLAG)
+        elseif k == K"String" && !has_flags(node, RAW_STRING_FLAG)
             had_error = unescape_julia_string(devnull, txtbuf, fbyte,
                                               nbyte, stream.diagnostics)
             if had_error
@@ -1146,11 +1173,14 @@ function validate_tokens(stream::ParseStream)
             end
             emit_diagnostic(stream, tokrange, error=msg)
         end
+
         if error_kind != K"None"
-            toks[i] = SyntaxToken(SyntaxHead(error_kind, EMPTY_FLAGS),
-                                  t.orig_kind, t.preceding_whitespace,
-                                  t.next_byte)
+            # Update the node with new error kind
+            stream.output[i] = RawGreenNode(SyntaxHead(error_kind, EMPTY_FLAGS),
+                                          node.byte_span, Kind(node.orig_kind))
         end
+
+        fbyte = nbyte
     end
     sort!(stream.diagnostics, by=first_byte)
 end
@@ -1158,89 +1188,6 @@ end
 # Tree construction from the list of text ranges held by ParseStream
 
 # API for extracting results from ParseStream
-
-"""
-    build_tree(make_node::Function, ::Type{StackEntry}, stream::ParseStream; kws...)
-
-Construct a tree from a ParseStream using depth-first traversal. `make_node`
-must have the signature
-
-    make_node(head::SyntaxHead, span::Integer, children)
-
-where `children` is either `nothing` for leaf nodes or an iterable of the
-children of type `StackEntry` for internal nodes. `StackEntry` may be a node
-type, but also may include other information required during building the tree.
-
-If the ParseStream has multiple nodes at the top level, `K"wrapper"` is used to
-wrap them in a single node.
-
-The tree here is constructed depth-first in postorder.
-"""
-function build_tree(make_node::Function, ::Type{NodeType}, stream::ParseStream;
-                    kws...) where NodeType
-    stack = Vector{NamedTuple{(:first_token,:node),Tuple{Int,NodeType}}}()
-
-    tokens = stream.tokens
-    ranges = stream.ranges
-    i = firstindex(tokens)
-    j = firstindex(ranges)
-    while true
-        last_token = j <= lastindex(ranges) ?
-                     ranges[j].last_token : lastindex(tokens)
-        # Process tokens to leaf nodes for all tokens used by the next internal node
-        while i <= last_token
-            t = tokens[i]
-            if kind(t) == K"TOMBSTONE"
-                i += 1
-                continue # Ignore removed tokens
-            end
-            srcrange = (stream.tokens[i-1].next_byte:
-                        stream.tokens[i].next_byte - 1)
-            h = head(t)
-            node = make_node(h, srcrange, nothing)
-            if !isnothing(node)
-                push!(stack, (first_token=i, node=node))
-            end
-            i += 1
-        end
-        if j > lastindex(ranges)
-            break
-        end
-        # Process internal nodes which end at the current position
-        while j <= lastindex(ranges)
-            r = ranges[j]
-            if r.last_token != last_token
-                break
-            end
-            if kind(r) == K"TOMBSTONE"
-                j += 1
-                continue
-            end
-            # Collect children from the stack for this internal node
-            k = length(stack) + 1
-            while k > 1 && r.first_token <= stack[k-1].first_token
-                k -= 1
-            end
-            srcrange = (stream.tokens[r.first_token-1].next_byte:
-                        stream.tokens[r.last_token].next_byte - 1)
-            children = (stack[n].node for n = k:length(stack))
-            node = make_node(head(r), srcrange, children)
-            resize!(stack, k-1)
-            if !isnothing(node)
-                push!(stack, (first_token=r.first_token, node=node))
-            end
-            j += 1
-        end
-    end
-    if length(stack) == 1
-        return only(stack).node
-    else
-        srcrange = (stream.tokens[1].next_byte:
-                    stream.tokens[end].next_byte - 1)
-        children = (x.node for x in stack)
-        return make_node(SyntaxHead(K"wrapper", EMPTY_FLAGS), srcrange, children)
-    end
-end
 
 function sourcetext(stream::ParseStream; steal_textbuf=false)
     Base.depwarn("Use of `sourcetext(::ParseStream)` is deprecated. Use `SourceFile(stream)` instead", :sourcetext)
@@ -1291,27 +1238,32 @@ Return the `Vector{UInt8}` text buffer being parsed by this `ParseStream`.
 """
 unsafe_textbuf(stream) = stream.textbuf
 
-first_byte(stream::ParseStream) = first(stream.tokens).next_byte # Use sentinel token
-last_byte(stream::ParseStream) = _next_byte(stream)-1
+first_byte(stream::ParseStream) = first(stream.output).byte_span + 1 # After sentinel
+last_byte(stream::ParseStream) = stream.next_byte - 1
 any_error(stream::ParseStream) = any_error(stream.diagnostics)
 
 # Return last non-whitespace byte which was parsed
 function last_non_whitespace_byte(stream::ParseStream)
-    for i = length(stream.tokens):-1:1
-        tok = stream.tokens[i]
-        if !(kind(tok) in KSet"Comment Whitespace NewlineWs ErrorEofMultiComment")
-            return tok.next_byte - 1
+    byte_pos = stream.next_byte
+    for i = length(stream.output):-1:1
+        node = stream.output[i]
+        byte_pos -= node.byte_span
+        if is_terminal(node) && !(kind(node) in KSet"Comment Whitespace NewlineWs ErrorEofMultiComment")
+            return byte_pos + node.byte_span - 1
         end
     end
     return first_byte(stream) - 1
 end
 
 function Base.empty!(stream::ParseStream)
-    t = last(stream.tokens)
-    empty!(stream.tokens)
-    # Restore sentinel token
-    push!(stream.tokens, SyntaxToken(SyntaxHead(K"TOMBSTONE",EMPTY_FLAGS),
-                                     K"TOMBSTONE", t.preceding_whitespace,
-                                     t.next_byte))
-    empty!(stream.ranges)
+    # Keep only the sentinel
+    if !isempty(stream.output) && kind(stream.output[1]) == K"TOMBSTONE"
+        resize!(stream.output, 1)
+    else
+        empty!(stream.output)
+        # Restore sentinel node
+        push!(stream.output, RawGreenNode(SyntaxHead(K"TOMBSTONE", EMPTY_FLAGS), 0, K"TOMBSTONE"))
+    end
+    # Reset next_byte to initial position
+    stream.next_byte = 1
 end
