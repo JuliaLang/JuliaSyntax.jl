@@ -76,6 +76,10 @@ function _leaf_to_Expr(source, txtbuf, txtbuf_offset, head, srcrange, node)
         return k == K"error" ?
             Expr(:error) :
             Expr(:error, "$(_token_error_descriptions[k]): `$(source[srcrange])`")
+    elseif k == K"begin" # begin/end as firstindex/lastindex
+        return Expr(:begin)
+    elseif k == K"end"
+        return Expr(:end)
     else
         val = isnothing(node) ?
             parse_julia_literal(txtbuf, head, srcrange .+ txtbuf_offset) :
