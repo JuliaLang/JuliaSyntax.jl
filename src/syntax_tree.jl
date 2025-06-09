@@ -60,6 +60,16 @@ struct SyntaxData <: AbstractSyntaxData
     byte_end::UInt32
     val::Any
 end
+function Base.getproperty(data::SyntaxData, name::Symbol)
+    if name === :position
+        # Previous versions of JuliaSyntax had `position::Int`.
+        # Allow access for compatibility. It was renamed (with changed) semantics
+        # to `byte_end::UInt32` to match the rest of the code base, which identified
+        # nodes, by their last byte.
+        return Int(getfield(data, :byte_end) - getfield(data, :raw).node_span + UInt32(1))
+    end
+    return getfield(data, name)
+end
 
 Base.hash(data::SyntaxData, h::UInt) =
     hash(data.source, hash(data.raw, hash(data.byte_end,

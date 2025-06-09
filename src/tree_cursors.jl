@@ -143,3 +143,16 @@ function Base.iterate(cursor::TopLevelSiblingIterator{C}, last::C) where {C}
     this === nothing && return nothing
     return (this, this)
 end
+
+# HACK: Force inlining of `filter` for our cursors to avoid significant perf
+# degradation.
+@inline function Base.iterate(f::Iterators.Filter{<:Any, Iterators.Reverse{T}}, state...) where {T<:Union{RedTreeCursor, GreenTreeCursor}}
+    y = iterate(f.itr, state...)
+    while y !== nothing
+        if f.flt(y[1])
+            return y
+        end
+        y = iterate(f.itr, y[2])
+    end
+    nothing
+end
