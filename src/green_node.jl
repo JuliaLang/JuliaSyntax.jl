@@ -137,16 +137,13 @@ function build_tree(T::Type{GreenNode}, stream::ParseStream; kws...)
         # to test a partial parse. Wrap everything in K"wrapper"
         all_processed = 0
         local cs
-        while true
-            c = GreenNode(cursor)
+        for child in reverse_toplevel_siblings(cursor)
+            c = GreenNode(child)
             if !@isdefined(cs)
-                cs = [c]
+                cs = GreenNode{SyntaxHead}[c]
             else
                 pushfirst!(cs, c)
             end
-            all_processed += treesize(cursor)+1
-            all_processed == length(stream.output)-1 && break
-            cursor = GreenTreeCursor(stream.output, length(stream.output) - all_processed)
         end
         @assert length(cs) != 1
         return GreenNode(SyntaxHead(K"wrapper", NON_TERMINAL_FLAG), stream.next_byte-1, cs)
