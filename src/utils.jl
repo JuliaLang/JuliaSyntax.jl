@@ -14,7 +14,7 @@ if VERSION < v"1.5"
     import Base.peek
 end
 
-if VERSION < v"1.8"
+@static if VERSION < v"1.8"
     macro callsite_inline(call)
         esc(call)
     end
