@@ -40,20 +40,22 @@ end
 Base.reverse(node::GreenTreeCursor) = Base.Iterators.Reverse(node)
 Base.IteratorSize(::Type{Reverse{GreenTreeCursor}}) = Base.SizeUnknown()
 @inline function Base.iterate(node::Reverse{GreenTreeCursor},
-                              next_idx::UInt32 = node.itr.position-UInt32(1))::Union{Nothing, Tuple{GreenTreeCursor, UInt32}}
+                              (next_idx, final)::NTuple{2, UInt32} =
+                              (node.itr.position-UInt32(1), node.itr.position - this(node.itr).node_span - UInt32(1)))::Union{Nothing, Tuple{GreenTreeCursor, NTuple{2, UInt32}}}
     node = node.itr
     while true
-        next_idx == node.position - this(node).node_span - UInt32(1) && return nothing
+        next_idx == final && return nothing
         next_node = GreenTreeCursor(node.parser_output, next_idx)
-        if kind(next_node) == K"TOMBSTONE"
+        nrgn = this(next_node)
+        if getfield(nrgn, :head).kind == K"TOMBSTONE"
             # TOMBSTONED nodes are counted as part of the size of the tree, but
             # do not contribute either byte ranges or children.
             next_idx -= UInt32(1)
             continue
         end
         # Inlined prev_sibling_assumed
-        new_next_idx = next_idx - this(next_node).node_span - UInt32(1)
-        return (next_node, new_next_idx)
+        new_next_idx = next_idx - nrgn.node_span - UInt32(1)
+        return (next_node, (new_next_idx, final))
     end
 end
 
@@ -95,15 +97,21 @@ end
 
 Base.reverse(node::RedTreeCursor) = Base.Iterators.Reverse(node)
 Base.IteratorSize(::Type{Reverse{RedTreeCursor}}) = Base.SizeUnknown()
-@inline function Base.iterate(
-        node::Reverse{RedTreeCursor},
-        (next_byte_end, next_idx)::NTuple{2, UInt32} =
-            (node.itr.byte_end, node.itr.green.position-UInt32(1)))::Union{Nothing, Tuple{RedTreeCursor, NTuple{2, UInt32}}}
-    r = iterate(Reverse(node.itr.green), next_idx)
+@inline function Base.iterate(node::Reverse{RedTreeCursor})::Union{Nothing, Tuple{RedTreeCursor, NTuple{3, UInt32}}}
+    r = iterate(Reverse(node.itr.green))
+    return _iterate_red_cursor(r, node.itr.byte_end)
+end
+
+@inline function Base.iterate(node::Reverse{RedTreeCursor}, state::NTuple{3, UInt32})::Union{Nothing, Tuple{RedTreeCursor, NTuple{3, UInt32}}}
+    r = iterate(Reverse(node.itr.green), Base.tail(state))
+    return _iterate_red_cursor(r, first(state))
+end
+
+@inline function _iterate_red_cursor(r, byte_end)
     r === nothing && return nothing
     next_node, next_idx = r
-    return RedTreeCursor(next_node, next_byte_end),
-           (next_byte_end - span(next_node), next_idx)
+    return RedTreeCursor(next_node, byte_end),
+           (byte_end - span(next_node), next_idx...)
 end
 
 is_leaf(node::RedTreeCursor)     = is_leaf(node.green)

@@ -360,10 +360,10 @@ end
 
 function Base.getproperty(rgn::RawGreenNode, name::Symbol)
     if name === :node_span
-        has_flags(rgn.head, NON_TERMINAL_FLAG) || return UInt32(0) # Leaf nodes have no children
+        has_flags(getfield(rgn, :head), NON_TERMINAL_FLAG) || return UInt32(0) # Leaf nodes have no children
         return getfield(rgn, :node_span_or_orig_kind)
     elseif name === :orig_kind
-        has_flags(rgn.head, NON_TERMINAL_FLAG) && error("Cannot access orig_kind for non-terminal node")
+        has_flags(getfield(rgn, :head), NON_TERMINAL_FLAG) && error("Cannot access orig_kind for non-terminal node")
         return Kind(getfield(rgn, :node_span_or_orig_kind))
     end
     getfield(rgn, name)

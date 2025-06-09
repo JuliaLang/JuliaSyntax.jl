@@ -119,20 +119,22 @@ function Base.show(io::IO, ::MIME"text/plain", node::GreenNode, str::AbstractStr
 end
 
 function GreenNode(cursor::GreenTreeCursor)
+    chead = head(cursor)
+    T = typeof(chead)
     if is_leaf(cursor)
-        children = nothing
+        return GreenNode{T}(head(cursor), span(cursor), nothing)
     else
-        children = GreenNode{typeof(head(cursor))}[]
+        children = GreenNode{T}[]
         for child in reverse(cursor)
             pushfirst!(children, GreenNode(child))
         end
+        return GreenNode{T}(head(cursor), span(cursor), children)
     end
-    return GreenNode{typeof(head(cursor))}(head(cursor), span(cursor), children)
 end
 
 function build_tree(T::Type{GreenNode}, stream::ParseStream; kws...)
     cursor = GreenTreeCursor(stream)
-    if treesize(cursor)+1 != length(stream.output)-1 # First output is a tombstone =
+    if has_toplevel_siblings(cursor)
         # There are multiple toplevel nodes, e.g. because we're using this
         # to test a partial parse. Wrap everything in K"wrapper"
         all_processed = 0
