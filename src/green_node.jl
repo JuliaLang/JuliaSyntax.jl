@@ -32,7 +32,7 @@ span(node::GreenNode) = node.span
 Base.getindex(node::GreenNode, i::Int) = children(node)[i]
 Base.getindex(node::GreenNode, rng::UnitRange) = view(children(node), rng)
 Base.firstindex(node::GreenNode) = 1
-Base.lastindex(node::GreenNode) = length(children(node))
+Base.lastindex(node::GreenNode) = children(node) === nothing ? 0 : length(children(node))
 
 """
 Get absolute position and span of the child of `node` at the given tree `path`.
