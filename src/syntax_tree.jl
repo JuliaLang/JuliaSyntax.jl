@@ -66,7 +66,7 @@ function Base.getproperty(data::SyntaxData, name::Symbol)
         # Allow access for compatibility. It was renamed (with changed) semantics
         # to `byte_end::UInt32` to match the rest of the code base, which identified
         # nodes, by their last byte.
-        return Int(getfield(data, :byte_end) - getfield(data, :raw).node_span + UInt32(1))
+        return Int(getfield(data, :byte_end) - getfield(data, :raw).span + UInt32(1))
     end
     return getfield(data, name)
 end
