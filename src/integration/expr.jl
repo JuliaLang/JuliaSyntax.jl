@@ -74,7 +74,7 @@ reverse_nontrivia_children(cursor) = Iterators.filter(should_include_node, Itera
 #
 # This function concatenating adjacent string chunks together as done in the
 # reference parser.
-function _string_to_Expr(cursor, source::SourceFile, txtbuf::Vector{UInt8}, txtbuf_offset::UInt32)
+function _string_to_Expr(cursor, source, txtbuf::Vector{UInt8}, txtbuf_offset::UInt32)
     ret = Expr(:string)
     args2 = Any[]
     i = 1
@@ -197,7 +197,7 @@ function _append_iterspec!(args::Vector{Any}, @nospecialize(ex))
     return args
 end
 
-function parseargs!(retexpr::Expr, loc::LineNumberNode, cursor, source::SourceFile, txtbuf::Vector{UInt8}, txtbuf_offset::UInt32)
+function parseargs!(retexpr::Expr, loc::LineNumberNode, cursor, source, txtbuf::Vector{UInt8}, txtbuf_offset::UInt32)
     args = retexpr.args
     firstchildhead = head(cursor)
     firstchildrange::UnitRange{UInt32} = byte_range(cursor)
@@ -221,7 +221,8 @@ _expr_leaf_val(cursor::RedTreeCursor, txtbuf::Vector{UInt8}, txtbuf_offset::UInt
 # Extended in JuliaLowering to support `node_to_expr(::SyntaxTree, ...)`
 
 # Convert `cursor` (SyntaxNode or RedTreeCursor) to an Expr
-function node_to_expr(cursor, source::SourceFile, txtbuf::Vector{UInt8}, txtbuf_offset::UInt32=UInt32(0))
+# `source` is a SourceFile, or if node was an Expr originally, a LineNumberNode
+function node_to_expr(cursor, source, txtbuf::Vector{UInt8}, txtbuf_offset::UInt32=UInt32(0))
     if !should_include_node(cursor)
         return nothing
     end
@@ -302,7 +303,7 @@ end
                                  firstchildhead::SyntaxHead,
                                  firstchildrange::UnitRange{UInt32},
                                  nodehead::SyntaxHead,
-                                 source::SourceFile)
+                                 source)
     args = retexpr.args
     k = kind(nodehead)
     endloc = source_location(LineNumberNode, source, last(srcrange))
