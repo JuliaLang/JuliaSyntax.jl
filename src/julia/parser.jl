@@ -1505,6 +1505,7 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
         # 2(x) ==> (* 2 x)
         return
     end
+    is_macrocall_on_entry = is_macrocall
     # source range of the @-prefixed part of a macro
     macro_atname_range = nothing
     # $A.@x  ==>  (macrocall (. ($ A) @x))
@@ -1533,7 +1534,7 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
             # A.@var"#" a ==> (macrocall (. A (var @#)) a)
             # @+x y       ==> (macrocall @+ x y)
             # A.@.x       ==> (macrocall (. A @.) x)
-            fix_macro_name_kind!(ps, macro_name_position)
+            is_macrocall_on_entry && emit(ps, mark, K"macro_name")
             let ps = with_space_sensitive(ps)
                 # Space separated macro arguments
                 # A.@foo a b    ==> (macrocall (. A @foo) a b)
@@ -1566,6 +1567,7 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
             # f(a; b; c)  ==> (call f a (parameters b) (parameters c))
             # (a=1)()  ==>  (call (parens (= a 1)))
             # f (a)    ==>  (call f (error-t) a)
+            is_macrocall_on_entry && emit(ps, mark, K"macro_name")
             bump_disallowed_space(ps)
             bump(ps, TRIVIA_FLAG)
             opts = parse_call_arglist(ps, K")")
@@ -1580,11 +1582,13 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
                 # @x(a, b)   ==>  (macrocall-p @x a b)
                 # A.@x(y)    ==>  (macrocall-p (. A @x) y)
                 # A.@x(y).z  ==>  (. (macrocall-p (. A @x) y) z)
-                fix_macro_name_kind!(ps, macro_name_position)
                 is_macrocall = false
+                # @f()()     ==>  (call (macrocall-p (macro_name f)))
+                is_macrocall_on_entry = false
                 macro_atname_range = nothing
             end
         elseif k == K"["
+            is_macrocall_on_entry && emit(ps, mark, K"macro_name")
             m = position(ps)
             # a [i]  ==>  (ref a (error-t) i)
             bump_disallowed_space(ps)
@@ -1599,7 +1603,6 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
                 # @S[a].b  ==>  (. (macrocall @S (vect a)) b)
                 #v1.7: @S[a ;; b]  ==>  (macrocall @S (ncat-2 a b))
                 #v1.6: @S[a ;; b]  ==>  (macrocall @S (error (ncat-2 a b)))
-                fix_macro_name_kind!(ps, macro_name_position)
                 emit(ps, m, ckind, cflags | set_numeric_flags(dim))
                 check_ncat_compat(ps, m, ckind)
                 emit(ps, mark, K"macrocall")
@@ -1643,12 +1646,18 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
                 emit_diagnostic(ps, macro_atname_range...,
                     error="`@` must appear on first or last macro name component")
                 bump(ps, TRIVIA_FLAG, error="Unexpected `.` after macro name")
+                # Recover by treating the `@` as if it had been on the wole thing
+                reset_node!(ps, macro_atname_range[2], kind=K"TOMBSTONE")
+                is_macrocall_on_entry = true
             else
                 bump(ps, TRIVIA_FLAG)
             end
             k = peek(ps)
             if k == K"("
                 if is_macrocall
+                    is_macrocall_on_entry && emit(ps, mark, K"macro_name")
+                    # Recover by pretending we do have the syntax
+                    is_macrocall_on_entry = false
                     # @M.(x)  ==> (macrocall (dotcall @M (error-t) x))
                     bump_invisible(ps, K"error", TRIVIA_FLAG)
                     emit_diagnostic(ps, mark,
@@ -1677,7 +1686,11 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
                 m = position(ps)
                 bump(ps, TRIVIA_FLAG)
                 parse_atom(ps)
-                emit(ps, m, K"$")
+                if is_macrocall
+                    emit(ps, m, K"error", error="invalid macro name")
+                else
+                    emit(ps, m, K"$")
+                end
                 macro_name_position = position(ps)
                 emit(ps, mark, K".")
             elseif k == K"@"
@@ -1690,11 +1703,12 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
                     bump(ps, TRIVIA_FLAG, error="repeated `@` in macro module path")
                 else
                     bump(ps, TRIVIA_FLAG)
-                    is_macrocall = true
                 end
                 parse_macro_name(ps)
                 macro_name_position = position(ps)
+                !is_macrocall && emit(ps, m, K"macro_name")
                 macro_atname_range = (m, position(ps))
+                is_macrocall = true
                 emit(ps, mark, K".")
             elseif k == K"'"
                 # f.'  =>  (dotcall-post f (error '))
@@ -1717,6 +1731,7 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
             bump(ps, remap_kind=K"Identifier")
             emit(ps, mark, K"call", POSTFIX_OP_FLAG)
         elseif k == K"{"
+            is_macrocall_on_entry && emit(ps, mark, K"macro_name")
             # Type parameter curlies and macro calls
             m = position(ps)
             # S {a} ==> (curly S (error-t) a)
@@ -1727,7 +1742,6 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
                 # @S{a,b} ==> (macrocall S (braces a b))
                 # A.@S{a}  ==> (macrocall (. A @S) (braces a))
                 # @S{a}.b  ==> (. (macrocall @S (braces a)) b)
-                fix_macro_name_kind!(ps, macro_name_position)
                 emit(ps, m, K"braces", opts.delim_flags)
                 emit(ps, mark, K"macrocall")
                 min_supported_version(v"1.6", ps, mark, "macro call without space before `{}`")
@@ -1754,8 +1768,8 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
             #
             # Use a special token kind for string and cmd macro names so the
             # names can be expanded later as necessary.
-            outk = is_string_delim(k) ? K"StringMacroName" : K"CmdMacroName"
-            fix_macro_name_kind!(ps, macro_name_position, outk)
+            outk = is_string_delim(k) ? K"macro_name_str" : K"macro_name_cmd"
+            emit(ps, mark, outk)
             parse_string(ps, true)
             t = peek_token(ps)
             k = kind(t)
@@ -2039,7 +2053,7 @@ function parse_resword(ps::ParseState)
         # export \n a      ==>  (export a)
         # export \$a, \$(a*b) ==> (export (\$ a) (\$ (parens (call-i a * b))))
         bump(ps, TRIVIA_FLAG)
-        parse_comma_separated(ps, x->parse_atsym(x, false))
+        parse_comma_separated(ps, x->parse_import_atsym(x, false))
         emit(ps, mark, word)
     elseif word in KSet"import using"
         parse_imports(ps)
@@ -2372,34 +2386,6 @@ function _is_valid_macro_name(peektok)
     return !is_error(peektok.kind) && (peektok.is_leaf || peektok.kind == K"var")
 end
 
-function fix_macro_name_kind!(ps::ParseState, macro_name_position, name_kind=nothing)
-    k = peek_behind(ps, macro_name_position).kind
-    if k == K"var"
-        macro_name_position = first_child_position(ps, macro_name_position)
-        k = peek_behind(ps, macro_name_position).kind
-    elseif k == K"parens"
-        # @(A) x  ==>  (macrocall (parens @A) x)
-        macro_name_position = first_child_position(ps, macro_name_position)
-        if macro_name_position == NO_POSITION
-            return
-        end
-        k = peek_behind(ps, macro_name_position).kind
-    elseif k == K"error"
-        # Error already reported in parse_macro_name
-        return
-    end
-    if isnothing(name_kind)
-        name_kind = _is_valid_macro_name(peek_behind(ps, macro_name_position)) ?
-                    K"MacroName" : K"error"
-        if name_kind == K"error"
-            # TODO: This isn't quite accurate
-            emit_diagnostic(ps, macro_name_position, macro_name_position,
-                            error="invalid macro name")
-        end
-    end
-    reset_node!(ps, macro_name_position, kind=name_kind)
-end
-
 # If remap_kind is false, the kind will be remapped by parse_call_chain after
 # it discovers which component of the macro's module path is the macro name.
 #
@@ -2425,15 +2411,16 @@ end
 # Parse an identifier, interpolation or @-prefixed symbol
 #
 # flisp: parse-atsym
-function parse_atsym(ps::ParseState, allow_quotes=true)
+function parse_import_atsym(ps::ParseState, allow_quotes=true)
     bump_trivia(ps)
     if peek(ps) == K"@"
+        mark = position(ps)
         # export @a       ==>  (export @a)
         # export @var"'"  ==>  (export (var @'))
         # export a, \n @b ==>  (export a @b)
         bump(ps, TRIVIA_FLAG)
         parse_macro_name(ps)
-        fix_macro_name_kind!(ps, position(ps))
+        emit(ps, mark, K"macro_name")
     else
         # export a  ==>  (export a)
         # export \n a  ==>  (export a)
@@ -2538,7 +2525,7 @@ function parse_import(ps::ParseState, word, has_import_prefix)
         # import A: x as y  ==>  (import (: (importpath A) (as (importpath x) y)))
         # using  A: x as y  ==>  (using (: (importpath A) (as (importpath x) y)))
         bump(ps, TRIVIA_FLAG)
-        parse_atsym(ps, false)
+        parse_import_atsym(ps, false)
         emit(ps, mark, K"as")
         if word == K"using" && !has_import_prefix
             # using A as B     ==>  (using (error (as (importpath A) B)))
@@ -2589,7 +2576,7 @@ function parse_import_path(ps::ParseState)
     end
     # import @x     ==>  (import (importpath @x))
     # import $A     ==>  (import (importpath ($ A)))
-    parse_atsym(ps, false)
+    parse_import_atsym(ps, false)
     while true
         t = peek_token(ps)
         k = kind(t)
@@ -2611,7 +2598,7 @@ function parse_import_path(ps::ParseState)
                 bump_disallowed_space(ps)
             end
             bump(ps, TRIVIA_FLAG)
-            parse_atsym(ps)
+            parse_import_atsym(ps)
         elseif k == K"..."
             # Import the .. operator
             # import A...  ==>  (import (importpath A ..))
