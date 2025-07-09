@@ -137,8 +137,8 @@ function untokenize(head::SyntaxHead; unique=true, include_flag_suff=true)
         is_postfix_op_call(head) && (str = str*"-post")
 
         k = kind(head)
-        # Handle numeric flags for nrow/ncat nodes
-        if k in KSet"nrow ncat typed_ncat"
+        # Handle numeric flags for nodes that take them
+        if k in KSet"nrow ncat typed_ncat dots"
             n = numeric_flags(head)
             n != 0 && (str = str*"-"*string(n))
         else
@@ -307,7 +307,12 @@ function peek_dotted_op_token(ps, allow_whitespace=false)
     isdotted = kind(t) == K"."
     if isdotted
         t2 = peek_token(ps, 2)
-        if !is_operator(t2) || (!allow_whitespace && preceding_whitespace(t2))
+        if (!allow_whitespace && preceding_whitespace(t2))
+            isdotted = false
+        elseif !is_operator(t2)
+            isdotted = false
+        elseif kind(t2) == K"." && peek(ps, 3) == K"."
+            # Treat `..` as dotted K".", unless there's another dot after
             isdotted = false
         else
             t = t2
@@ -316,13 +321,13 @@ function peek_dotted_op_token(ps, allow_whitespace=false)
     return (isdotted, t)
 end
 
-function bump_dotted(ps, isdot, flags=EMPTY_FLAGS; emit_dot_node=false, remap_kind=K"None")
+function bump_dotted(ps, isdot, t, flags=EMPTY_FLAGS; emit_dot_node=false, remap_kind=K"None")
     if isdot
-        if emit_dot_node
-            dotmark = position(ps)
-            bump(ps, TRIVIA_FLAG) # TODO: NOTATION_FLAG
-        else
-            bump(ps, TRIVIA_FLAG) # TODO: NOTATION_FLAG
+        dotmark = position(ps)
+        bump(ps, TRIVIA_FLAG)
+        if kind(t) == K"."
+            bump(ps, TRIVIA_FLAG)
+            return emit(ps, dotmark, K"dots", set_numeric_flags(2))
         end
     end
     pos = bump(ps, flags, remap_kind=remap_kind)
