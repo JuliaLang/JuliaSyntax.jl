@@ -2,10 +2,15 @@ module Tokenize
 
 export tokenize, untokenize
 
-using ..JuliaSyntax: JuliaSyntax, Kind, @K_str, @KSet_str, @callsite_inline
+using ..JuliaSyntax: JuliaSyntax, Kind, @K_str, @KSet_str, @callsite_inline,
+    generic_operators_by_level, PrecedenceLevel, PREC_NONE, PREC_ASSIGNMENT,
+    PREC_PAIRARROW, PREC_CONDITIONAL, PREC_ARROW, PREC_LAZYOR, PREC_LAZYAND,
+    PREC_COMPARISON, PREC_PIPE_LT, PREC_PIPE_GT, PREC_COLON, PREC_PLUS,
+    PREC_BITSHIFT, PREC_TIMES, PREC_RATIONAL, PREC_POWER, PREC_DECL,
+    PREC_WHERE, PREC_DOT, PREC_QUOTE, PREC_UNICODE_OPS, PREC_COMPOUND_ASSIGN
 
 import ..JuliaSyntax: kind,
-    is_literal, is_contextual_keyword, is_word_operator
+    is_literal, is_contextual_keyword, is_word_operator, is_operator
 
 #-------------------------------------------------------------------------------
 # Character-based predicates for tokenization
@@ -72,32 +77,6 @@ end
 
 readchar(io::IO) = eof(io) ? EOF_CHAR : read(io, Char)
 
-# Some unicode operators are normalized by the tokenizer into their equivalent
-# kinds. See also normalize_identifier()
-const _ops_with_unicode_aliases = [
-    # \minus '−' is normalized into K"-",
-    '−' => K"-"
-    # Lookalikes which are normalized into K"⋅",
-    # https://github.com/JuliaLang/julia/pull/25157,
-    '\u00b7' => K"⋅" # '·' Middle Dot,,
-    '\u0387' => K"⋅" # '·' Greek Ano Teleia,,
-]
-
-function _nondot_symbolic_operator_kinds()
-    op_range = reinterpret(UInt16, K"BEGIN_OPS"):reinterpret(UInt16, K"END_OPS")
-    setdiff(reinterpret.(Kind, op_range), [
-        K"ErrorInvalidOperator"
-        K"Error**"
-        K"..."
-        K"."
-        K"where"
-        K"isa"
-        K"in"
-        K".'"
-        K"op="
-    ])
-end
-
 function _char_in_set_expr(varname, firstchars)
     codes = sort!(UInt32.(unique(firstchars)))
     terms = []
@@ -121,15 +100,14 @@ end
    if c == EOF_CHAR || !isvalid(c)
        return false
    end
-   u = UInt32(c)
-   return $(_char_in_set_expr(:u,
-       append!(first.(string.(_nondot_symbolic_operator_kinds())),
-               first.(_ops_with_unicode_aliases))))
+   # Check if character is known operator char or in our unicode ops dictionary
+   return c in ('!', '#', '$', '%', '&', '*', '+', '-', '−', '/', ':', '<', '=', '>', '?', '@', '\\', '^', '|', '~', '÷', '⊻') ||
+          haskey(_unicode_ops, c)
 end
 
 # Checks whether a Char is an operator which can be prefixed with a dot `.`
 function is_dottable_operator_start_char(c)
-    return c != '?' && c != '$' && c != ':' && c != '\'' && is_operator_start_char(c)
+    return c != '?' && c != '$' && c != ':' && c != '\'' && c != '#' && c != '@' && is_operator_start_char(c)
 end
 
 @eval function isopsuffix(c::Char)
@@ -151,7 +129,8 @@ end
 end
 
 function optakessuffix(k)
-    (K"BEGIN_OPS" <= k <= K"END_OPS") &&
+    # Most operators can take suffix except for specific ones
+    is_operator(k) &&
     !(
         K"BEGIN_ASSIGNMENTS" <= k <= K"END_ASSIGNMENTS" ||
         k == K"?"   ||
@@ -161,8 +140,6 @@ function optakessuffix(k)
         k == K"||"  ||
         k == K"in"  ||
         k == K"isa" ||
-        k == K"≔"   ||
-        k == K"⩴"   ||
         k == K":"   ||
         k == K"$"   ||
         k == K"::"  ||
@@ -176,14 +153,16 @@ function optakessuffix(k)
 end
 
 const _unicode_ops = let
-    ks = _nondot_symbolic_operator_kinds()
-    ss = string.(ks)
+    # Map single-character unicode operators to their precedence levels
+    ops = Dict{Char, PrecedenceLevel}()
 
-    ops = Dict{Char, Kind}([first(s)=>k for (k,s) in zip(ks,ss)
-                            if length(s) == 1 && !isascii(s[1])])
-    for ck in _ops_with_unicode_aliases
-        push!(ops, ck)
+    # Add operators from generic_operators_by_level
+    for (prec, chars) in generic_operators_by_level
+        for c in chars
+            ops[c] = prec
+        end
     end
+
     ops
 end
 
@@ -195,12 +174,12 @@ struct RawToken
     # Offsets into a string or buffer
     startbyte::Int # The byte where the token start in the buffer
     endbyte::Int # The byte where the token ended in the buffer
-    suffix::Bool
+    op_precedence::PrecedenceLevel # If K"Operator", the operator's precedence level
 end
 function RawToken(kind::Kind, startbyte::Int, endbyte::Int)
-    RawToken(kind, startbyte, endbyte, false)
+    RawToken(kind, startbyte, endbyte, PREC_NONE)
 end
-RawToken() = RawToken(K"error", 0, 0, false)
+RawToken() = RawToken(K"error", 0, 0, PREC_NONE)
 
 const EMPTY_TOKEN = RawToken()
 
@@ -425,17 +404,33 @@ end
 
 Returns a `RawToken` of kind `kind` with contents `str` and starts a new `RawToken`.
 """
-function emit(l::Lexer, kind::Kind, maybe_op=true)
-    suffix = false
-    if optakessuffix(kind) && maybe_op
+function emit(l::Lexer, kind::Kind)
+    tok = RawToken(kind, startpos(l), position(l) - 1, PREC_NONE)
+
+    l.last_token = kind
+    return tok
+end
+
+function emit_operator(l::Lexer, kind::Kind, precedence::PrecedenceLevel, take_suffix=optakessuffix(kind))
+    if take_suffix
         while isopsuffix(peekchar(l))
             readchar(l)
-            suffix = true
+            kind = K"Operator"
         end
     end
+    tok = RawToken(kind, startpos(l), position(l) - 1, precedence)
 
-    tok = RawToken(kind, startpos(l), position(l) - 1, suffix)
+    l.last_token = kind
+    return tok
+end
 
+"""
+    emit(l::Lexer, kind::Kind)
+
+Returns a `RawToken` of kind `kind` with contents `str` and starts a new `RawToken`.
+"""
+function emit_trivia(l::Lexer, kind::Kind)
+    tok = RawToken(kind, startpos(l), position(l) - 1, PREC_NONE)
     l.last_token = kind
     return tok
 end
@@ -448,9 +443,9 @@ Returns the next `RawToken`.
 function next_token(l::Lexer, start = true)
     start && start_token!(l)
     if !isempty(l.string_states)
-        lex_string_chunk(l)
+        return lex_string_chunk(l)
     else
-        _next_token(l, readchar(l))
+        return _next_token(l, readchar(l))
     end
 end
 
@@ -523,18 +518,44 @@ function _next_token(l::Lexer, c)
         return lex_plus(l);
     elseif c == '-'
         return lex_minus(l);
-    elseif c == '−' # \minus '−' treated as hyphen '-'
-        return emit(l, accept(l, '=') ? K"op=" : K"-")
     elseif c == '`'
         return lex_backtick(l);
+    elseif c == '−' # \minus '−' treated as hyphen '-'
+        if peekchar(l) == '='
+            return emit_operator(l, K"Operator", PREC_COMPOUND_ASSIGN)
+        else
+            return emit_operator(l, K"-", PREC_PLUS)
+        end
+    elseif c == '∈'
+        return emit_operator(l, K"∈", PREC_COMPARISON)
+    elseif c == '⋆'
+        return emit_operator(l, K"⋆", PREC_TIMES)
+    elseif c == '±'
+        return emit_operator(l, K"±", PREC_PLUS)
+    elseif c == '∓'
+        return emit_operator(l, K"∓", PREC_PLUS)
+    elseif c == '¬'
+        return emit(l, K"¬")
+    elseif c == '√'
+        return emit(l, K"√")
+    elseif c == '∛'
+        return emit(l, K"∛")
+    elseif c == '∜'
+        return emit(l, K"∜")
+    elseif c == '≔'
+        return emit_operator(l, K"≔", PREC_ASSIGNMENT)
+    elseif c == '⩴'
+        return emit_operator(l, K"⩴", PREC_ASSIGNMENT)
+    elseif c == '≕'
+        return emit_operator(l, K"≕", PREC_ASSIGNMENT)
+    elseif haskey(_unicode_ops, c)
+        return emit_operator(l, K"Operator", _unicode_ops[c])
     elseif is_identifier_start_char(c)
         return lex_identifier(l, c)
     elseif isdigit(c)
         return lex_digit(l, K"Integer")
-    elseif (k = get(_unicode_ops, c, K"None")) != K"None"
-        return emit(l, k)
     else
-        emit(l,
+        return emit(l,
             !isvalid(c)           ? K"ErrorInvalidUTF8"   :
             is_invisible_char(c)  ? K"ErrorInvisibleChar" :
             is_identifier_char(c) ? K"ErrorIdentifierStart" :
@@ -640,7 +661,7 @@ function lex_string_chunk(l)
                         K"\"\"\"" : K"```")
         else
             return emit(l, state.delim == '"' ? K"\"" :
-                           state.delim == '`' ? K"`"  : K"'", false)
+                           state.delim == '`' ? K"`"  : K"'")
         end
     end
     # Read a chunk of string characters
@@ -739,7 +760,7 @@ function lex_whitespace(l::Lexer, c)
         end
         c = readchar(l)
     end
-    return emit(l, k)
+    return emit_trivia(l, k)
 end
 
 function lex_comment(l::Lexer)
@@ -748,7 +769,8 @@ function lex_comment(l::Lexer)
         while true
             pc, ppc = dpeekchar(l)
             if pc == '\n' || (pc == '\r' && ppc == '\n') || pc == EOF_CHAR
-                return emit(l, valid ? K"Comment" : K"ErrorInvalidUTF8")
+                return valid ? emit_trivia(l, K"Comment") :
+                               emit(l, K"ErrorInvalidUTF8")
             end
             valid &= isvalid(pc)
             readchar(l)
@@ -780,7 +802,7 @@ function lex_comment(l::Lexer)
                         outk = !valid ? K"ErrorInvalidUTF8" :
                                bidi_state != init_bidi_state ? K"ErrorBidiFormatting" :
                                K"Comment"
-                        return emit(l, outk)
+                        return valid ? emit_trivia(l, outk) : emit(l, outk)
                     end
                 end
             end
@@ -793,54 +815,57 @@ end
 function lex_greater(l::Lexer)
     if accept(l, '>')
         if accept(l, '>')
-            if accept(l, '=')
-                return emit(l, K"op=")
-            else # >>>?, ? not a =
-                return emit(l, K">>>")
+            if peekchar(l) == '='
+                return emit_operator(l, K"Operator", PREC_COMPOUND_ASSIGN) # >>>=
+            else
+                return emit_operator(l, K"Operator", PREC_BITSHIFT) # >>>
             end
-        elseif accept(l, '=')
-            return emit(l, K"op=")
         else
-            return emit(l, K">>")
+            if peekchar(l) == '='
+                return emit_operator(l, K"Operator", PREC_COMPOUND_ASSIGN) # >>=
+            else
+                return emit_operator(l, K"Operator", PREC_BITSHIFT) # >>
+            end
         end
     elseif accept(l, '=')
-        return emit(l, K">=")
+        return emit_operator(l, K"Operator", PREC_COMPARISON) # >=
     elseif accept(l, ':')
         return emit(l, K">:")
     else
-        return emit(l, K">")
+        return emit_operator(l, K">", PREC_COMPARISON)
     end
 end
 
 # Lex a less char, a '<' has been consumed
 function lex_less(l::Lexer)
     if accept(l, '<')
-        if accept(l, '=')
-            return emit(l, K"op=")
-        else # '<<?', ? not =, ' '
-            return emit(l, K"<<")
+        # << or <<=
+        if peekchar(l) == '='
+            return emit_operator(l, K"Operator", PREC_COMPOUND_ASSIGN) # <<=
+        else
+            return emit_operator(l, K"Operator", PREC_BITSHIFT) # <<
         end
     elseif accept(l, '=')
-        return emit(l, K"<=")
+        return emit_operator(l, K"Operator", PREC_COMPARISON) # <=
     elseif accept(l, ':')
         return emit(l, K"<:")
     elseif accept(l, '|')
-        return emit(l, K"<|")
+        return emit_operator(l, K"Operator", PREC_PIPE_LT) # <|
     elseif dpeekchar(l) == ('-', '-')
         readchar(l); readchar(l)
         if accept(l, '-')
             return emit(l, K"ErrorInvalidOperator")
         else
             if accept(l, '>')
-                return emit(l, K"<-->")
+                return emit_operator(l, K"Operator", PREC_ARROW) # <-->
             elseif accept(l, '-')
                 return emit(l, K"ErrorInvalidOperator")
             else
-                return emit(l, K"<--")
+                return emit_operator(l, K"Operator", PREC_ARROW) # <--
             end
         end
     else
-        return emit(l, K"<")
+        return emit_operator(l, K"<", PREC_COMPARISON)
     end
 end
 
@@ -848,15 +873,12 @@ end
 # An '=' char has been consumed
 function lex_equal(l::Lexer)
     if accept(l, '=')
-        if accept(l, '=')
-            emit(l, K"===")
-        else
-            emit(l, K"==")
-        end
+        accept(l, '=')
+        return emit_operator(l, K"Operator", PREC_COMPARISON) # ==, ===
     elseif accept(l, '>')
-        emit(l, K"=>")
+        return emit_operator(l, K"Operator", PREC_PAIRARROW)
     else
-        emit(l, K"=")
+        return emit(l, K"=")
     end
 end
 
@@ -867,16 +889,16 @@ function lex_colon(l::Lexer)
     elseif accept(l, '=')
         return emit(l, K":=")
     else
-        return emit(l, K":")
+        return emit_operator(l, K":", PREC_COLON)
     end
 end
 
 function lex_exclaim(l::Lexer)
     if accept(l, '=')
         if accept(l, '=')
-            return emit(l, K"!==")
+            return emit_operator(l, K"Operator", PREC_COMPARISON) # !==
         else
-            return emit(l, K"!=")
+            return emit_operator(l, K"Operator", PREC_COMPARISON) # !=
         end
     else
         return emit(l, K"!")
@@ -884,84 +906,82 @@ function lex_exclaim(l::Lexer)
 end
 
 function lex_percent(l::Lexer)
-    if accept(l, '=')
-        return emit(l, K"op=")
-    else
-        return emit(l, K"%")
-    end
+    return emit_operator(l, K"Operator", peekchar(l) == '=' ? PREC_COMPOUND_ASSIGN : PREC_TIMES)
 end
 
 function lex_bar(l::Lexer)
-    if accept(l, '=')
-        return emit(l, K"op=")
-    elseif accept(l, '>')
-        return emit(l, K"|>")
+    if accept(l, '>')
+        return emit_operator(l, K"Operator", PREC_PIPE_GT) # |>
     elseif accept(l, '|')
         return emit(l, K"||")
     else
-        emit(l, K"|")
+        return emit_operator(l, K"Operator", peekchar(l) == '=' ? PREC_COMPOUND_ASSIGN : PREC_PLUS)
     end
 end
 
 function lex_plus(l::Lexer)
     if accept(l, '+')
-        return emit(l, K"++")
-    elseif accept(l, '=')
-        return emit(l, K"op=")
+        return emit_operator(l, K"++", PREC_PLUS)
     end
-    return emit(l, K"+")
+    # Check if followed by = for compound assignment
+    if peekchar(l) == '='
+        return emit_operator(l, K"Operator", PREC_COMPOUND_ASSIGN)
+    end
+    return emit_operator(l, K"+", PREC_PLUS)
 end
 
 function lex_minus(l::Lexer)
     if accept(l, '-')
         if accept(l, '>')
-            return emit(l, K"-->")
+            return emit_operator(l, K"-->", PREC_ARROW)
         else
             return emit(l, K"ErrorInvalidOperator") # "--" is an invalid operator
         end
     elseif l.last_token != K"." && accept(l, '>')
-        return emit(l, K"->")
-    elseif accept(l, '=')
-        return emit(l, K"op=")
+        return emit_operator(l, K"->", PREC_ARROW)
     end
-    return emit(l, K"-")
+    # Check if followed by = for compound assignment
+    if peekchar(l) == '='
+        return emit_operator(l, K"Operator", PREC_COMPOUND_ASSIGN)
+    end
+    return emit_operator(l, K"-", PREC_PLUS)
 end
 
 function lex_star(l::Lexer)
     if accept(l, '*')
         return emit(l, K"Error**") # "**" is an invalid operator use ^
-    elseif accept(l, '=')
-        return emit(l, K"op=")
     end
-    return emit(l, K"*")
+    # Check if followed by = for compound assignment
+    if peekchar(l) == '='
+        return emit_operator(l, K"Operator", PREC_COMPOUND_ASSIGN)
+    end
+    return emit_operator(l, K"*", PREC_TIMES)
 end
 
 function lex_circumflex(l::Lexer)
-    if accept(l, '=')
-        return emit(l, K"op=")
+    if peekchar(l) == '='
+        return emit_operator(l, K"Operator", PREC_COMPOUND_ASSIGN)
     end
-    return emit(l, K"^")
+    return emit_operator(l, K"Operator", PREC_POWER) # ^
 end
 
 function lex_division(l::Lexer)
-    if accept(l, '=')
-        return emit(l, K"op=")
+    if peekchar(l) == '='
+        return emit_operator(l, K"Operator", PREC_COMPOUND_ASSIGN)
     end
-    return emit(l, K"÷")
+    return emit_operator(l, K"Operator", PREC_TIMES) # /
 end
 
 function lex_dollar(l::Lexer)
-    if accept(l, '=')
-        return emit(l, K"op=")
+    # Check if followed by = for compound assignment
+    if peekchar(l) == '='
+        return emit_operator(l, K"Operator", PREC_COMPOUND_ASSIGN)
     end
-    return emit(l, K"$")
+    return emit_operator(l, K"$", PREC_PLUS)
 end
 
 function lex_xor(l::Lexer)
-    if accept(l, '=')
-        return emit(l, K"op=")
-    end
-    return emit(l, K"⊻")
+    return emit_operator(l, K"Operator", peekchar(l) == '=' ? PREC_COMPOUND_ASSIGN : PREC_PLUS)
 end
 
 function accept_number(l::Lexer, f::F) where {F}
@@ -1096,20 +1116,21 @@ function lex_prime(l)
          is_literal(l.last_token)
         # FIXME ^ This doesn't cover all cases - probably needs involvement
         # from the parser state.
-        return emit(l, K"'")
+        return emit_operator(l, K"'", PREC_QUOTE)
     else
         push!(l.string_states, StringState(false, true, '\'', 0))
-        return emit(l, K"'", false)
+        return emit(l, K"'")
     end
 end
 
 function lex_amper(l::Lexer)
     if accept(l, '&')
         return emit(l, K"&&")
-    elseif accept(l, '=')
-        return emit(l, K"op=")
     else
-        return emit(l, K"&")
+        if peekchar(l) == '='
+            return emit_operator(l, K"Operator", PREC_COMPOUND_ASSIGN)
+        end
+        return emit_operator(l, K"&", PREC_TIMES)
     end
 end
 
@@ -1143,24 +1164,16 @@ end
 # Parse a token starting with a forward slash.
 # A '/' has been consumed
 function lex_forwardslash(l::Lexer)
-    if accept(l, '/')
-        if accept(l, '=')
-            return emit(l, K"op=")
-        else
-            return emit(l, K"//")
-        end
-    elseif accept(l, '=')
-        return emit(l, K"op=")
-    else
-        return emit(l, K"/")
-    end
+    prec = accept(l, '/') ? PREC_RATIONAL : PREC_TIMES
+    return emit_operator(l, K"Operator", peekchar(l) == '=' ? PREC_COMPOUND_ASSIGN : prec) # // or /
 end
 
 function lex_backslash(l::Lexer)
-    if accept(l, '=')
-        return emit(l, K"op=")
+    # Check if followed by = for compound assignment
+    if peekchar(l) == '='
+        return emit_operator(l, K"Operator", PREC_COMPOUND_ASSIGN) # \ before =
     end
-    return emit(l, K"\\")
+    return emit_operator(l, K"Operator", PREC_TIMES)
 end
 
 function lex_dot(l::Lexer)
@@ -1231,11 +1244,12 @@ function lex_identifier(l::Lexer, c)
     end
 
     if n > MAX_KW_LENGTH
-        emit(l, K"Identifier")
+        return emit(l, K"Identifier")
     elseif h == _true_hash || h == _false_hash
-        emit(l, K"Bool")
+        return emit(l, K"Bool")
     else
-        emit(l, get(_kw_hash, h, K"Identifier"))
+        k = get(_kw_hash, h, K"Identifier")
+        return emit(l, k)
     end
 end
 

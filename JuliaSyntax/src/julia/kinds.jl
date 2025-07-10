@@ -181,7 +181,6 @@ Return the `Kind` of `x`.
 """
 kind(k::Kind) = k
 
-
 #-------------------------------------------------------------------------------
 # Kinds used by JuliaSyntax
 register_kinds!(JuliaSyntax, 0, [
@@ -193,6 +192,7 @@ register_kinds!(JuliaSyntax, 0, [
     # Identifiers
     "BEGIN_IDENTIFIERS"
         "Identifier"
+        "Operator"
         "Placeholder" # Used for empty catch variables, and all-underscore identifiers in lowering
     "END_IDENTIFIERS"
 
@@ -278,725 +278,56 @@ register_kinds!(JuliaSyntax, 0, [
     "ErrorInvalidOperator"
     "Error**"
 
-    # Level 1
+    # Various operators that have special parsing rules and thus get explicit heads.
+    # All other operators (including suffixed versions of these) are K"Operator".
     "BEGIN_ASSIGNMENTS"
-        "BEGIN_SYNTACTIC_ASSIGNMENTS"
         "="
         ".="
-        "op="  # Updating assignment operator ( $= %= &= *= += -= //= /= <<= >>= >>>= \= ^= |= ÷= ⊻= )
-        ".op="
         ":="
-        "END_SYNTACTIC_ASSIGNMENTS"
         "~"
         "≔"
         "⩴"
         "≕"
+        # Compound assignments
+        "op="
+        ".op="
     "END_ASSIGNMENTS"
-
-    "BEGIN_PAIRARROW"
-        "=>"
-    "END_PAIRARROW"
-
-    # Level 2
-    "BEGIN_CONDITIONAL"
-    "?"
-    "END_CONDITIONAL"
-
-    # Level 3
-    "BEGIN_ARROW"
-        "-->"
-        "<--"
-        "<-->"
-        "←"
-        "→"
-        "↔"
-        "↚"
-        "↛"
-        "↞"
-        "↠"
-        "↢"
-        "↣"
-        "↤"
-        "↦"
-        "↮"
-        "⇎"
-        "⇍"
-        "⇏"
-        "⇐"
-        "⇒"
-        "⇔"
-        "⇴"
-        "⇶"
-        "⇷"
-        "⇸"
-        "⇹"
-        "⇺"
-        "⇻"
-        "⇼"
-        "⇽"
-        "⇾"
-        "⇿"
-        "⟵"
-        "⟶"
-        "⟷"
-        "⟹"
-        "⟺"
-        "⟻"
-        "⟼"
-        "⟽"
-        "⟾"
-        "⟿"
-        "⤀"
-        "⤁"
-        "⤂"
-        "⤃"
-        "⤄"
-        "⤅"
-        "⤆"
-        "⤇"
-        "⤌"
-        "⤍"
-        "⤎"
-        "⤏"
-        "⤐"
-        "⤑"
-        "⤔"
-        "⤕"
-        "⤖"
-        "⤗"
-        "⤘"
-        "⤝"
-        "⤞"
-        "⤟"
-        "⤠"
-        "⥄"
-        "⥅"
-        "⥆"
-        "⥇"
-        "⥈"
-        "⥊"
-        "⥋"
-        "⥎"
-        "⥐"
-        "⥒"
-        "⥓"
-        "⥖"
-        "⥗"
-        "⥚"
-        "⥛"
-        "⥞"
-        "⥟"
-        "⥢"
-        "⥤"
-        "⥦"
-        "⥧"
-        "⥨"
-        "⥩"
-        "⥪"
-        "⥫"
-        "⥬"
-        "⥭"
-        "⥰"
-        "⧴"
-        "⬱"
-        "⬰"
-        "⬲"
-        "⬳"
-        "⬴"
-        "⬵"
-        "⬶"
-        "⬷"
-        "⬸"
-        "⬹"
-        "⬺"
-        "⬻"
-        "⬼"
-        "⬽"
-        "⬾"
-        "⬿"
-        "⭀"
-        "⭁"
-        "⭂"
-        "⭃"
-        "⥷"
-        "⭄"
-        "⥺"
-        "⭇"
-        "⭈"
-        "⭉"
-        "⭊"
-        "⭋"
-        "⭌"
-        "￩"
-        "￫"
-        "⇜"
-        "⇝"
-        "↜"
-        "↝"
-        "↩"
-        "↪"
-        "↫"
-        "↬"
-        "↼"
-        "↽"
-        "⇀"
-        "⇁"
-        "⇄"
-        "⇆"
-        "⇇"
-        "⇉"
-        "⇋"
-        "⇌"
-        "⇚"
-        "⇛"
-        "⇠"
-        "⇢"
-        "↷"
-        "↶"
-        "↺"
-        "↻"
-        "🢲"
-    "END_ARROW"
-
-    # Level 4
-    "BEGIN_LAZYOR"
-        "||"
-        ".||"
-    "END_LAZYOR"
-
-    # Level 5
-    "BEGIN_LAZYAND"
-        "&&"
-        ".&&"
-    "END_LAZYAND"
-
-    # Level 6
-    "BEGIN_COMPARISON"
-        "<:"
-        ">:"
-        ">"
-        "<"
-        ">="
-        "≥"
-        "<="
-        "≤"
-        "=="
-        "==="
-        "≡"
-        "!="
-        "≠"
-        "!=="
-        "≢"
-        "∈"
-        "in"
-        "isa"
-        "∉"
-        "∋"
-        "∌"
-        "⊆"
-        "⊈"
-        "⊂"
-        "⊄"
-        "⊊"
-        "∝"
-        "∊"
-        "∍"
-        "∥"
-        "∦"
-        "∷"
-        "∺"
-        "∻"
-        "∽"
-        "∾"
-        "≁"
-        "≃"
-        "≂"
-        "≄"
-        "≅"
-        "≆"
-        "≇"
-        "≈"
-        "≉"
-        "≊"
-        "≋"
-        "≌"
-        "≍"
-        "≎"
-        "≐"
-        "≑"
-        "≒"
-        "≓"
-        "≖"
-        "≗"
-        "≘"
-        "≙"
-        "≚"
-        "≛"
-        "≜"
-        "≝"
-        "≞"
-        "≟"
-        "≣"
-        "≦"
-        "≧"
-        "≨"
-        "≩"
-        "≪"
-        "≫"
-        "≬"
-        "≭"
-        "≮"
-        "≯"
-        "≰"
-        "≱"
-        "≲"
-        "≳"
-        "≴"
-        "≵"
-        "≶"
-        "≷"
-        "≸"
-        "≹"
-        "≺"
-        "≻"
-        "≼"
-        "≽"
-        "≾"
-        "≿"
-        "⊀"
-        "⊁"
-        "⊃"
-        "⊅"
-        "⊇"
-        "⊉"
-        "⊋"
-        "⊏"
-        "⊐"
-        "⊑"
-        "⊒"
-        "⊜"
-        "⊩"
-        "⊬"
-        "⊮"
-        "⊰"
-        "⊱"
-        "⊲"
-        "⊳"
-        "⊴"
-        "⊵"
-        "⊶"
-        "⊷"
-        "⋍"
-        "⋐"
-        "⋑"
-        "⋕"
-        "⋖"
-        "⋗"
-        "⋘"
-        "⋙"
-        "⋚"
-        "⋛"
-        "⋜"
-        "⋝"
-        "⋞"
-        "⋟"
-        "⋠"
-        "⋡"
-        "⋢"
-        "⋣"
-        "⋤"
-        "⋥"
-        "⋦"
-        "⋧"
-        "⋨"
-        "⋩"
-        "⋪"
-        "⋫"
-        "⋬"
-        "⋭"
-        "⋲"
-        "⋳"
-        "⋴"
-        "⋵"
-        "⋶"
-        "⋷"
-        "⋸"
-        "⋹"
-        "⋺"
-        "⋻"
-        "⋼"
-        "⋽"
-        "⋾"
-        "⋿"
-        "⟈"
-        "⟉"
-        "⟒"
-        "⦷"
-        "⧀"
-        "⧁"
-        "⧡"
-        "⧣"
-        "⧤"
-        "⧥"
-        "⩦"
-        "⩧"
-        "⩪"
-        "⩫"
-        "⩬"
-        "⩭"
-        "⩮"
-        "⩯"
-        "⩰"
-        "⩱"
-        "⩲"
-        "⩳"
-        "⩵"
-        "⩶"
-        "⩷"
-        "⩸"
-        "⩹"
-        "⩺"
-        "⩻"
-        "⩼"
-        "⩽"
-        "⩾"
-        "⩿"
-        "⪀"
-        "⪁"
-        "⪂"
-        "⪃"
-        "⪄"
-        "⪅"
-        "⪆"
-        "⪇"
-        "⪈"
-        "⪉"
-        "⪊"
-        "⪋"
-        "⪌"
-        "⪍"
-        "⪎"
-        "⪏"
-        "⪐"
-        "⪑"
-        "⪒"
-        "⪓"
-        "⪔"
-        "⪕"
-        "⪖"
-        "⪗"
-        "⪘"
-        "⪙"
-        "⪚"
-        "⪛"
-        "⪜"
-        "⪝"
-        "⪞"
-        "⪟"
-        "⪠"
-        "⪡"
-        "⪢"
-        "⪣"
-        "⪤"
-        "⪥"
-        "⪦"
-        "⪧"
-        "⪨"
-        "⪩"
-        "⪪"
-        "⪫"
-        "⪬"
-        "⪭"
-        "⪮"
-        "⪯"
-        "⪰"
-        "⪱"
-        "⪲"
-        "⪳"
-        "⪴"
-        "⪵"
-        "⪶"
-        "⪷"
-        "⪸"
-        "⪹"
-        "⪺"
-        "⪻"
-        "⪼"
-        "⪽"
-        "⪾"
-        "⪿"
-        "⫀"
-        "⫁"
-        "⫂"
-        "⫃"
-        "⫄"
-        "⫅"
-        "⫆"
-        "⫇"
-        "⫈"
-        "⫉"
-        "⫊"
-        "⫋"
-        "⫌"
-        "⫍"
-        "⫎"
-        "⫏"
-        "⫐"
-        "⫑"
-        "⫒"
-        "⫓"
-        "⫔"
-        "⫕"
-        "⫖"
-        "⫗"
-        "⫘"
-        "⫙"
-        "⫷"
-        "⫸"
-        "⫹"
-        "⫺"
-        "⊢"
-        "⊣"
-        "⟂"
-        # ⫪,⫫ see https://github.com/JuliaLang/julia/issues/39350
-        "⫪"
-        "⫫"
-    "END_COMPARISON"
-
-    # Level 7
-    "BEGIN_PIPE"
-        "<|"
-        "|>"
-    "END_PIPE"
-
-    # Level 8
-    "BEGIN_COLON"
-        ":"
-        "…"
-        "⁝"
-        "⋮"
-        "⋱"
-        "⋰"
-        "⋯"
-    "END_COLON"
-
-    # Level 9
-    "BEGIN_PLUS"
-        "\$"
-        "+"
-        "-" # also used for "−"
-        "++"
-        "⊕"
-        "⊖"
-        "⊞"
-        "⊟"
-        "|"
-        "∪"
-        "∨"
-        "⊔"
-        "±"
-        "∓"
-        "∔"
-        "∸"
-        "≏"
-        "⊎"
-        "⊻"
-        "⊽"
-        "⋎"
-        "⋓"
-        "⟇"
-        "⧺"
-        "⧻"
-        "⨈"
-        "⨢"
-        "⨣"
-        "⨤"
-        "⨥"
-        "⨦"
-        "⨧"
-        "⨨"
-        "⨩"
-        "⨪"
-        "⨫"
-        "⨬"
-        "⨭"
-        "⨮"
-        "⨹"
-        "⨺"
-        "⩁"
-        "⩂"
-        "⩅"
-        "⩊"
-        "⩌"
-        "⩏"
-        "⩐"
-        "⩒"
-        "⩔"
-        "⩖"
-        "⩗"
-        "⩛"
-        "⩝"
-        "⩡"
-        "⩢"
-        "⩣"
-        "¦"
-    "END_PLUS"
-
-    # Level 10
-    "BEGIN_TIMES"
-        "*"
-        "/"
-        "÷"
-        "%"
-        "⋅" # also used for lookalikes "·" and "·"
-        "∘"
-        "×"
-        "\\"
-        "&"
-        "∩"
-        "∧"
-        "⊗"
-        "⊘"
-        "⊙"
-        "⊚"
-        "⊛"
-        "⊠"
-        "⊡"
-        "⊓"
-        "∗"
-        "∙"
-        "∤"
-        "⅋"
-        "≀"
-        "⊼"
-        "⋄"
-        "⋆"
-        "⋇"
-        "⋉"
-        "⋊"
-        "⋋"
-        "⋌"
-        "⋏"
-        "⋒"
-        "⟑"
-        "⦸"
-        "⦼"
-        "⦾"
-        "⦿"
-        "⧶"
-        "⧷"
-        "⨇"
-        "⨰"
-        "⨱"
-        "⨲"
-        "⨳"
-        "⨴"
-        "⨵"
-        "⨶"
-        "⨷"
-        "⨸"
-        "⨻"
-        "⨼"
-        "⨽"
-        "⩀"
-        "⩃"
-        "⩄"
-        "⩋"
-        "⩍"
-        "⩎"
-        "⩑"
-        "⩓"
-        "⩕"
-        "⩘"
-        "⩚"
-        "⩜"
-        "⩞"
-        "⩟"
-        "⩠"
-        "⫛"
-        "⊍"
-        "▷"
-        "⨝"
-        "⟕"
-        "⟖"
-        "⟗"
-        "⌿"
-        "⨟"
-    "END_TIMES"
-
-    # Level 11
-    "BEGIN_RATIONAL"
-        "//"
-    "END_RATIONAL"
-
-    # Level 12
-    "BEGIN_BITSHIFTS"
-        "<<"
-        ">>"
-        ">>>"
-    "END_BITSHIFTS"
-
-    # Level 13
-    "BEGIN_POWER"
-        "^"
-        "↑"
-        "↓"
-        "⇵"
-        "⟰"
-        "⟱"
-        "⤈"
-        "⤉"
-        "⤊"
-        "⤋"
-        "⤒"
-        "⤓"
-        "⥉"
-        "⥌"
-        "⥍"
-        "⥏"
-        "⥑"
-        "⥔"
-        "⥕"
-        "⥘"
-        "⥙"
-        "⥜"
-        "⥝"
-        "⥠"
-        "⥡"
-        "⥣"
-        "⥥"
-        "⥮"
-        "⥯"
-        "￪"
-        "￬"
-    "END_POWER"
-
-    # Level 14
-    "BEGIN_DECL"
-        "::"
-    "END_DECL"
-
-    # Level 15
-    "BEGIN_WHERE"
-        "where"
-    "END_WHERE"
-
-    # Level 16
-    "BEGIN_DOT"
-        "."
-    "END_DOT"
-
-    "!"
-    "'"
-    ".'"
-    "->"
-
-    "BEGIN_UNICODE_OPS"
-        "¬"
-        "√"
-        "∛"
-        "∜"
-    "END_UNICODE_OPS"
+    "?"     # ternary operator
+    "||"    # not an operator call
+    ".||"   # dotted of above (not emitted by lexer)
+    "&&"    # not an operator call
+    ".&&"   # dotted of above (not emitted by lexer)
+    "<:"    # subtype syntax
+    ">:"    # supertype syntax
+    "::"    # field type syntax
+    "."     # various dot syntax
+    ".."    # .. operator (not emitted by lexer)
+    "in"    # iteration syntax
+    "isa"
+    "where"
+    "!"     # syntactic unary
+    "'"     # special postfix parsing
+    ".'"    # special postfix parsing
+    "->"    # syntactic arrow
+    "-->"   # syntactic arrow
+    ":"     # used for quoting
+    "+"     # used in numeric constants
+    "++"    # special chaining syntax
+    "*"     # special chaining syntax
+    "<"     # recovery path for :<
+    ">"     # recovery path for :>
+    "\$"    # interpolation
+    "-"     # negated constants
+    "&"     # syntactic unary
+    "∈"     # iteration syntax
+    # all syntactic unary
+    "⋆"
+    "±"
+    "∓"
+    "¬"
+    "√"
+    "∛"
+    "∜"
     "END_OPS"
 
     # 2. Nonterminals which are exposed in the AST, but where the surface
@@ -1073,6 +404,109 @@ register_kinds!(JuliaSyntax, 0, [
         "error"
     "END_ERRORS"
 ])
+
+@enum PrecedenceLevel begin
+    PREC_NONE
+    PREC_ASSIGNMENT
+    PREC_PAIRARROW
+    PREC_CONDITIONAL
+    PREC_ARROW
+    PREC_LAZYOR
+    PREC_LAZYAND
+    PREC_COMPARISON
+    PREC_PIPE_LT
+    PREC_PIPE_GT
+    PREC_COLON
+    PREC_PLUS
+    PREC_BITSHIFT
+    PREC_TIMES
+    PREC_RATIONAL
+    PREC_POWER
+    PREC_DECL
+    PREC_WHERE
+    PREC_DOT
+    PREC_QUOTE
+    PREC_UNICODE_OPS
+    # Special precendence to only allow compound assignment for designated operators, for
+    # compatibility with flisp
+    PREC_COMPOUND_ASSIGN
+end
+
+const generic_operators_by_level = Dict{PrecedenceLevel, Vector{Char}}(
+    PREC_ASSIGNMENT  => Char[#= = .= := ~ ≔ ⩴ ≕ =#],
+    PREC_PAIRARROW   => Char[#= => =#],
+    PREC_CONDITIONAL => Char[#= ? =#],
+    PREC_ARROW =>
+         [#=  -> --> <-- <--> =#
+          '←', '→', '↔', '↚', '↛', '↞', '↠', '↢',
+          '↣', '↤', '↦', '↮', '⇎', '⇍', '⇏', '⇐', '⇒', '⇔', '⇴',
+          '⇶', '⇷', '⇸', '⇹', '⇺', '⇻', '⇼', '⇽', '⇾', '⇿', '⟵',
+          '⟶', '⟷', '⟹', '⟺', '⟻', '⟼', '⟽', '⟾', '⟿', '⤀', '⤁',
+          '⤂', '⤃', '⤄', '⤅', '⤆', '⤇', '⤌', '⤍', '⤎', '⤏', '⤐', '⤑',
+          '⤔', '⤕', '⤖', '⤗', '⤘', '⤝', '⤞', '⤟', '⤠', '⥄', '⥅', '⥆',
+          '⥇', '⥈', '⥊', '⥋', '⥎', '⥐', '⥒', '⥓', '⥖', '⥗', '⥚', '⥛',
+          '⥞', '⥟', '⥢', '⥤', '⥦', '⥧', '⥨', '⥩', '⥪', '⥫', '⥬', '⥭',
+          '⥰', '⧴', '⬱', '⬰', '⬲', '⬳', '⬴', '⬵', '⬶', '⬷', '⬸', '⬹',
+          '⬺', '⬻', '⬼', '⬽', '⬾', '⬿', '⭀', '⭁', '⭂', '⭃', '⥷', '⭄',
+          '⥺', '⭇', '⭈', '⭉', '⭊', '⭋', '⭌', '￩', '￫', '⇜', '⇝', '↜', '↝',
+          '↩', '↪', '↫', '↬', '↼', '↽', '⇀', '⇁', '⇄', '⇆', '⇇', '⇉', '⇋',
+          '⇌', '⇚', '⇛', '⇠', '⇢', '↷', '↶', '↺', '↻', '🢲'],
+    PREC_LAZYOR  => Char[#= || =#],
+    PREC_LAZYAND => Char[#= && =#],
+    PREC_COMPARISON =>
+         [#= <: >: in isa < > ∈ == != !== =#
+          '≥',  '≤', '≡', '≠', '≢', '∉', '∋',
+          '∌', '⊆', '⊈', '⊂', '⊄', '⊊', '∝', '∊', '∍', '∥', '∦',
+          '∷', '∺', '∻', '∽', '∾', '≁', '≃', '≂', '≄', '≅', '≆',
+          '≇', '≈', '≉', '≊', '≋', '≌', '≍', '≎', '≐', '≑', '≒',
+          '≓', '≖', '≗', '≘', '≙', '≚', '≛', '≜', '≝', '≞', '≟',
+          '≣', '≦', '≧', '≨', '≩', '≪', '≫', '≬', '≭', '≮', '≯',
+          '≰', '≱', '≲', '≳', '≴', '≵', '≶', '≷', '≸', '≹', '≺',
+          '≻', '≼', '≽', '≾', '≿', '⊀', '⊁', '⊃', '⊅', '⊇', '⊉',
+          '⊋', '⊏', '⊐', '⊑', '⊒', '⊜', '⊩', '⊬', '⊮', '⊰', '⊱',
+          '⊲', '⊳', '⊴', '⊵', '⊶', '⊷', '⋍', '⋐', '⋑', '⋕', '⋖',
+          '⋗', '⋘', '⋙', '⋚', '⋛', '⋜', '⋝', '⋞', '⋟', '⋠', '⋡',
+          '⋢', '⋣', '⋤', '⋥', '⋦', '⋧', '⋨', '⋩', '⋪', '⋫', '⋬',
+          '⋭', '⋲', '⋳', '⋴', '⋵', '⋶', '⋷', '⋸', '⋹', '⋺', '⋻',
+          '⋼', '⋽', '⋾', '⋿', '⟈', '⟉', '⟒', '⦷', '⧀', '⧁', '⧡',
+          '⧣', '⧤', '⧥', '⩦', '⩧', '⩪', '⩫', '⩬', '⩭', '⩮', '⩯',
+          '⩰', '⩱', '⩲', '⩳', '⩵', '⩶', '⩷', '⩸', '⩹', '⩺', '⩻',
+          '⩼', '⩽', '⩾', '⩿', '⪀', '⪁', '⪂', '⪃', '⪄', '⪅', '⪆', '⪇',
+          '⪈', '⪉', '⪊', '⪋', '⪌', '⪍', '⪎', '⪏', '⪐', '⪑', '⪒', '⪓',
+          '⪔', '⪕', '⪖', '⪗', '⪘', '⪙', '⪚', '⪛', '⪜', '⪝', '⪞', '⪟',
+          '⪠', '⪡', '⪢', '⪣', '⪤', '⪥', '⪦', '⪧', '⪨', '⪩', '⪪',
+          '⪫', '⪬', '⪭', '⪮', '⪯', '⪰', '⪱', '⪲', '⪳', '⪴', '⪵',
+          '⪶', '⪷', '⪸', '⪹', '⪺', '⪻', '⪼', '⪽', '⪾', '⪿', '⫀',
+          '⫁', '⫂', '⫃', '⫄', '⫅', '⫆', '⫇', '⫈', '⫉', '⫊', '⫋',
+          '⫌', '⫍', '⫎', '⫏', '⫐', '⫑', '⫒', '⫓', '⫔', '⫕', '⫖',
+          '⫗', '⫘', '⫙', '⫷', '⫸', '⫹', '⫺', '⊢', '⊣', '⟂', '⫪', '⫫'],
+    PREC_PIPE_LT => Char[#= <| =#],
+    PREC_PIPE_GT => Char[#= |> =#],
+    PREC_COLON => [ #= : .. =# '…', '⁝', '⋮', '⋱', '⋰', '⋯'],
+    PREC_PLUS =>
+        [ #= + - ± ∓ ++ =#
+         '⊕', '⊖', '⊞', '⊟', '|', '∪', '∨',
+         '⊔', '±', '∓', '∔', '∸', '≏', '⊎', '⊻', '⊽', '⋎', '⋓', '⟇', '⧺',
+         '⧻', '⨈', '⨢', '⨣', '⨤', '⨥', '⨦', '⨧', '⨨', '⨩', '⨪', '⨫', '⨬', '⨭',
+         '⨮', '⨹', '⨺', '⩁', '⩂', '⩅', '⩊', '⩌', '⩏', '⩐', '⩒', '⩔', '⩖', '⩗',
+         '⩛', '⩝', '⩡', '⩢', '⩣', '¦'],
+    PREC_TIMES =>
+        [ #= * ⋆ & =#
+         '/', '÷', '%', '⋅', '·', '·', '∘', '×', '\\', '∩', '∧', '⊗',
+         '⊘', '⊙', '⊚', '⊛', '⊠', '⊡', '⊓', '∗', '∙', '∤', '⅋', '≀', '⊼', '⋄', '⋆',
+         '⋇', '⋉', '⋊', '⋋', '⋌', '⋏', '⋒', '⟑', '⦸', '⦼', '⦾', '⦿', '⧶', '⧷',
+         '⨇', '⨰', '⨱', '⨲', '⨳', '⨴', '⨵', '⨶', '⨷', '⨸', '⨻', '⨼', '⨽', '⩀',
+         '⩃', '⩄', '⩋', '⩍', '⩎', '⩑', '⩓', '⩕', '⩘', '⩚', '⩜', '⩞', '⩟', '⩠',
+         '⫛', '⊍', '▷', '⨝', '⟕', '⟖', '⟗', '⌿', '⨟',
+         '\u00b7', # '·' Middle Dot
+         '\u0387'  # '·' Greek Ano Teleia
+         ],
+    PREC_RATIONAL => Char[#= // =#],
+    PREC_BITSHIFT => Char[#= << >> >>> =#],
+    PREC_POWER    => ['^', '↑', '↓', '⇵', '⟰', '⟱', '⤈', '⤉', '⤊', '⤋', '⤒', '⤓', '⥉',
+                      '⥌', '⥍', '⥏', '⥑', '⥔', '⥕', '⥘', '⥙', '⥜', '⥝', '⥠', '⥡', '⥣', '⥥',
+                      '⥮', '⥯', '￪', '￬'],
+)
 
 #-------------------------------------------------------------------------------
 const _nonunique_kind_names = Set([
@@ -1157,7 +591,7 @@ is_keyword(k::Kind) = K"BEGIN_KEYWORDS" <= k <= K"END_KEYWORDS"
 is_block_continuation_keyword(k::Kind) = K"BEGIN_BLOCK_CONTINUATION_KEYWORDS" <= k <= K"END_BLOCK_CONTINUATION_KEYWORDS"
 is_literal(k::Kind) = K"BEGIN_LITERAL" <= k <= K"END_LITERAL"
 is_number(k::Kind)  = K"BEGIN_NUMBERS" <= k <= K"END_NUMBERS"
-is_operator(k::Kind) = K"BEGIN_OPS" <= k <= K"END_OPS"
+is_operator(k::Kind) = k == K"Operator" || K"BEGIN_OPS" <= k <= K"END_OPS"
 is_word_operator(k::Kind) = (k == K"in" || k == K"isa" || k == K"where")
 
 is_identifier(x) = is_identifier(kind(x))
@@ -1172,28 +606,30 @@ is_word_operator(x) = is_word_operator(kind(x))
 # Predicates for operator precedence
 # FIXME: Review how precedence depends on dottedness, eg
 # https://github.com/JuliaLang/julia/pull/36725
+
+
 is_prec_assignment(x)  = K"BEGIN_ASSIGNMENTS" <= kind(x) <= K"END_ASSIGNMENTS"
-is_prec_pair(x)        = K"BEGIN_PAIRARROW"   <= kind(x) <= K"END_PAIRARROW"
-is_prec_conditional(x) = K"BEGIN_CONDITIONAL" <= kind(x) <= K"END_CONDITIONAL"
-is_prec_arrow(x)       = K"BEGIN_ARROW"       <= kind(x) <= K"END_ARROW"
-is_prec_lazy_or(x)     = K"BEGIN_LAZYOR"      <= kind(x) <= K"END_LAZYOR"
-is_prec_lazy_and(x)    = K"BEGIN_LAZYAND"     <= kind(x) <= K"END_LAZYAND"
-is_prec_comparison(x)  = K"BEGIN_COMPARISON"  <= kind(x) <= K"END_COMPARISON"
-is_prec_pipe(x)        = K"BEGIN_PIPE"        <= kind(x) <= K"END_PIPE"
-is_prec_colon(x)       = K"BEGIN_COLON"       <= kind(x) <= K"END_COLON"
-is_prec_plus(x)        = K"BEGIN_PLUS"        <= kind(x) <= K"END_PLUS"
-is_prec_bitshift(x)    = K"BEGIN_BITSHIFTS"   <= kind(x) <= K"END_BITSHIFTS"
-is_prec_times(x)       = K"BEGIN_TIMES"       <= kind(x) <= K"END_TIMES"
-is_prec_rational(x)    = K"BEGIN_RATIONAL"    <= kind(x) <= K"END_RATIONAL"
-is_prec_power(x)       = K"BEGIN_POWER"       <= kind(x) <= K"END_POWER"
-is_prec_decl(x)        = K"BEGIN_DECL"        <= kind(x) <= K"END_DECL"
-is_prec_where(x)       = K"BEGIN_WHERE"       <= kind(x) <= K"END_WHERE"
-is_prec_dot(x)         = K"BEGIN_DOT"         <= kind(x) <= K"END_DOT"
-is_prec_unicode_ops(x) = K"BEGIN_UNICODE_OPS" <= kind(x) <= K"END_UNICODE_OPS"
-is_prec_pipe_lt(x)     = kind(x) == K"<|"
-is_prec_pipe_gt(x)     = kind(x) == K"|>"
+is_prec_pair(x)        = (kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_PAIRARROW))
+is_prec_conditional(x) = kind(x) == K"?"
+is_prec_arrow(x)       = (kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_ARROW)) || kind(x) == K"-->"
+is_prec_lazy_or(x)     = (kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_LAZYOR)) || kind(x) in KSet"||"
+is_prec_lazy_and(x)    = (kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_LAZYAND)) || kind(x) in KSet"&&"
+is_prec_comparison(x)  = (kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_COMPARISON)) || kind(x) in KSet"<: >: in isa < > ∈"
+is_prec_pipe_lt(x)     = kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_PIPE_LT)
+is_prec_pipe_gt(x)     = kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_PIPE_GT)
+is_prec_pipe(x)        = is_prec_pipe_lt(x) || is_prec_pipe_gt(x)
+is_prec_colon(x)       = (kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_COLON)) || kind(x) == K".."
+is_prec_plus(x)        = (kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_PLUS)) || kind(x) in KSet"+ - ± ∓"
+is_prec_bitshift(x)    = kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_BITSHIFT)
+is_prec_times(x)       = (kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_TIMES)) || kind(x) in KSet"* ⋆ &"
+is_prec_rational(x)    = kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_RATIONAL)
+is_prec_power(x)       = kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_POWER)
+is_prec_decl(x)        = (kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_DECL)) || kind(x) == K"::"
+is_prec_where(x)       = (kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_WHERE)) || kind(x) == K"where"
+is_prec_dot(x)         = (kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_DOT)) || kind(x) == K"."
+is_prec_quote(x)       = (kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_QUOTE)) || kind(x) == K"'"
 is_syntax_kind(x)      = K"BEGIN_SYNTAX_KINDS"<= kind(x) <= K"END_SYNTAX_KINDS"
-is_syntactic_assignment(x) = K"BEGIN_SYNTACTIC_ASSIGNMENTS" <= kind(x) <= K"END_SYNTACTIC_ASSIGNMENTS"
+is_prec_compound_assign(x) = kind(x) == K"Operator" && numeric_flags(head(x)) == Int(PREC_COMPOUND_ASSIGN)
 
 function is_string_delim(x)
     kind(x) in (K"\"", K"\"\"\"")
@@ -1217,5 +653,5 @@ function is_syntactic_operator(x)
     # in the parser? The lexer itself usually disallows such tokens, so it's
     # not clear whether we need to handle them. (Though note `.->` is a
     # token...)
-    return k in KSet"&& || . ... ->" || is_syntactic_assignment(k)
+    return k in KSet"&& || . ... -> = :="
 end
