@@ -76,6 +76,8 @@ tests = [
         "f(x) where S where U = 1" =>  "(function-= (where (where (call f x) S) U) 1)"
         "(f(x)::T) where S = 1" =>  "(function-= (where (parens (::-i (call f x) T)) S) 1)"
         "f(x) = 1 = 2"    =>  "(function-= (call f x) (= 1 2))" # Should be a warning!
+        # Bad assignment with suffixed op
+        ((v = v"1.12",), "a +₁= b") =>  "(op= a (error +₁) b)"
     ],
     JuliaSyntax.parse_pair => [
         "a => b"  =>  "(call-i a => b)"
@@ -617,7 +619,7 @@ tests = [
         "function (::g(x))() end" => "(function (call (parens (::-pre (call g x)))) (block))"
         "function (f::T{g(i)})() end" => "(function (call (parens (::-i f (curly T (call g i))))) (block))"
         "function (::T)() end" =>  "(function (call (parens (::-pre T))) (block))"
-        "function (:*=(f))() end" => "(function (call (parens (call (quote-: *=) f))) (block))"
+        "function (:*=(f))() end" => "(function (call (parens (call (quote-: (op= *)) f))) (block))"
         "function begin() end" =>  "(function (call (error begin)) (block))"
         "function f() end"     =>  "(function (call f) (block))"
         "function type() end"  =>  "(function (call type) (block))"
@@ -817,24 +819,24 @@ tests = [
         "||"  =>  "(error ||)"
         "."   =>  "(error .)"
         "..." =>  "(error (dots-3))"
-        "+="  =>  "(error +=)"
-        "-="  =>  "(error -=)"
-        "*="  =>  "(error *=)"
-        "/="  =>  "(error /=)"
-        "//=" =>  "(error //=)"
-        "|="  =>  "(error |=)"
-        "^="  =>  "(error ^=)"
-        "÷="  =>  "(error ÷=)"
-        "%="  =>  "(error %=)"
-        "<<=" =>  "(error <<=)"
-        ">>=" =>  "(error >>=)"
-        ">>>="=>  "(error >>>=)"
-        "\\=" =>  "(error \\=)"
-        "&="  =>  "(error &=)"
-        ":="  =>  "(error :=)"
-        "\$=" =>  "(error \$=)"
-        "⊻="  =>  "(error ⊻=)"
-        ".+=" =>  "(error (. +=))"
+        "+="  =>  "(error (op= +))"
+        "-="  =>  "(error (op= -))"
+        "*="  =>  "(error (op= *))"
+        "/="  =>  "(error (op= /))"
+        "//=" =>  "(error (op= //))"
+        "|="  =>  "(error (op= |))"
+        "^="  =>  "(error (op= ^))"
+        "÷="  =>  "(error (op= ÷))"
+        "%="  =>  "(error (op= %))"
+        "<<=" =>  "(error (op= <<))"
+        ">>=" =>  "(error (op= >>))"
+        ">>>="=>  "(error (op= >>>))"
+        "\\=" =>  "(error (op= \\))"
+        "&="  =>  "(error (op= &))"
+        ":="  =>  "(error :=)" # Assignment operator, not `:`-update
+        "\$=" =>  "(error (op= \$))"
+        "⊻="  =>  "(error (op= ⊻))"
+        ".+=" =>  "(error (.op= +))"
         # Normal operators
         "+"  =>  "+"
         # Assignment-precedence operators which can be used as identifiers
@@ -843,8 +845,8 @@ tests = [
         "⩴"  =>  "⩴"
         "≕"  =>  "≕"
         # Quoted syntactic operators allowed
-        ":+="  =>  "(quote-: +=)"
-        ":.+=" =>  "(quote-: (. +=))"
+        ":+="  =>  "(quote-: (op= +))"
+        ":.+=" =>  "(quote-: (.op= +))"
         ":.="  =>  "(quote-: (. =))"
         ":.&&" =>  "(quote-: (. &&))"
         # Special symbols quoted
@@ -1116,7 +1118,7 @@ parsestmt_test_specs = [
     # detecting raw vs non-raw strings. The old parser was tightly coupled to
     # the lexer and the parser state was used to disambiguate these cases.
     "x in' '" => "(call-i x in (char (error)))"
-    "x in'``\$" => "(call-i x in (call-i (juxtapose (char '`' (error-t)) (cmdstring-r (error-t))) \$ (error)))"
+    "x in'``\$" => "(wrapper (call-i x in (juxtapose (char '`' (error-t)) (cmdstring-r (error-t)))) (error-t \$))"
     "var\"#\"`str`" => "(juxtapose (var # (error-t)) (cmdstring-r \"str\"))"
     "var\"#\"\"str\"" => "(juxtapose (var # (error-t)) (error-t) (string \"str\"))"
 
@@ -1165,8 +1167,8 @@ parsestmt_with_kind_tests = [
     "a += b" => "(op= a::Identifier +::Identifier b::Identifier)"
     "a .+= b" => "(.op= a::Identifier +::Identifier b::Identifier)"
     "a >>= b" => "(op= a::Identifier >>::Identifier b::Identifier)"
-    ":+="    => "(quote-: +=::op=)"
-    ":.+="   => "(quote-: (. +=::op=))"
+    ":+="    => "(quote-: (op= +::Identifier))"
+    ":.+="   => "(quote-: (.op= +::Identifier))"
 ]
 
 @testset "parser `Kind` remapping" begin

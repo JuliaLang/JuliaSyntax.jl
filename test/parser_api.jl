@@ -214,8 +214,10 @@ tokensplit(str; kws...) = [kind(tok) => untokenize(tok, str) for tok in tokenize
         K"Integer" => "1",
     ]
 
-    # A predicate based on flags()
-    @test JuliaSyntax.is_suffixed(tokenize("+₁")[1])
+    # +₁ is tokenized as a single identifier token (subscripts are valid in identifiers)
+    tokens = tokenize("+₁")
+    @test length(tokens) == 1  # Just the identifier, endmarker is not included in tokenize()
+    @test kind(tokens[1]) == K"Identifier"
 
     # Buffer interface
     @test tokenize(Vector{UInt8}("a + b")) == tokenize("a + b")
