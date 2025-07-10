@@ -318,7 +318,7 @@ function adjust_macro_name!(retexpr::Union{Expr, Symbol}, k::Kind)
     end
 end
 
-# Split out from the above for codesize reasons, to avoid specialization on multiple
+# Split out from `node_to_expr` for codesize reasons, to avoid specialization on multiple
 # tree types.
 @noinline function _node_to_expr(retexpr::Expr, loc::LineNumberNode,
                                  srcrange::UnitRange{UInt32},
