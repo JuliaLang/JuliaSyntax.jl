@@ -421,7 +421,7 @@ tests = [
         # Allow `@` in macrocall only in first and last position
         "A.B.@x"    =>  "(macrocall (. (. A B) (macro_name x)))"
         "@A.B.x"    =>  "(macrocall (macro_name (. (. A B) x)))"
-        "A.@B.x"    =>  "(macrocall (macro_name (. (. A B) (error-t) x)))"
+        "A.@B.x"    =>  "(macrocall (. (. A (error-t) B) (macro_name (error-t) x)))"
         "@M.(x)"    =>  "(macrocall (dotcall (macro_name M) (error-t) x))"
         "f.(a,b)"   =>  "(dotcall f a b)"
         "f.(a,b,)"  =>  "(dotcall-, f a b)"
