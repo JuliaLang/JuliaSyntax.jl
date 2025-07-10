@@ -455,6 +455,11 @@ tests = [
         "@S{a,b}" => "(macrocall (macro_name S) (braces a b))"
         "A.@S{a}" => "(macrocall (. A (macro_name S)) (braces a))"
         "@S{a}.b" => "(. (macrocall (macro_name S) (braces a)) b)"
+        # Macro calls with chained operations
+        "@a[b][c]" => "(ref (macrocall (macro_name a) (vect b)) c)"
+        "@a{b}{c}" => "(curly (macrocall (macro_name a) (braces b)) c)"
+        "@a[b]{c}" => "(curly (macrocall (macro_name a) (vect b)) c)"
+        "@a{b}[c]" => "(ref (macrocall (macro_name a) (braces b)) c)"
         "S{a,b}"  => "(curly S a b)"
         "T{y for x = xs; a}" => "(curly T (generator y (iteration (in x xs))) (parameters a))"
         # String macros

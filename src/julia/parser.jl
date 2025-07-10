@@ -1505,7 +1505,7 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
         # 2(x) ==> (* 2 x)
         return
     end
-    is_macrocall_on_entry = is_macrocall
+    processing_macro_name = is_macrocall
     # source range of the @-prefixed part of a macro
     macro_atname_range = nothing
     # $A.@x  ==>  (macrocall (. ($ A) (macro_name x)))
@@ -1534,7 +1534,8 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
             # A.@var"#" a ==> (macrocall (. A (macro_name (var #))) a)
             # @+x y       ==> (macrocall (macro_name +) x y)
             # A.@.x       ==> (macrocall (. A (macro_name .)) x)
-            is_macrocall_on_entry && emit(ps, mark, K"macro_name")
+            processing_macro_name && emit(ps, mark, K"macro_name")
+            processing_macro_name = false
             let ps = with_space_sensitive(ps)
                 # Space separated macro arguments
                 # A.@foo a b    ==> (macrocall (. A (macro_name foo)) a b)
@@ -1567,7 +1568,8 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
             # f(a; b; c)  ==> (call f a (parameters b) (parameters c))
             # (a=1)()  ==>  (call (parens (= a 1)))
             # f (a)    ==>  (call f (error-t) a)
-            is_macrocall_on_entry && emit(ps, mark, K"macro_name")
+            processing_macro_name && emit(ps, mark, K"macro_name")
+            processing_macro_name = false
             bump_disallowed_space(ps)
             bump(ps, TRIVIA_FLAG)
             opts = parse_call_arglist(ps, K")")
@@ -1588,7 +1590,8 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
                 macro_atname_range = nothing
             end
         elseif k == K"["
-            is_macrocall_on_entry && emit(ps, mark, K"macro_name")
+            processing_macro_name && emit(ps, mark, K"macro_name")
+            processing_macro_name = false
             m = position(ps)
             # a [i]  ==>  (ref a (error-t) i)
             bump_disallowed_space(ps)
@@ -1642,22 +1645,22 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
                 # Allow `@` in macrocall only in first and last position
                 # A.B.@x  ==>  (macrocall (. (. A B) (macro_name x)))
                 # @A.B.x  ==>  (macrocall (macro_name (. (. A B) x)))
-                # A.@B.x  ==>  (macrocall (. (. A B (error-t)) (macro_name x)))
+                # A.@B.x  ==>  (macrocall (macro_name (. (. A B (error-t))))
                 emit_diagnostic(ps, macro_atname_range...,
                     error="`@` must appear on first or last macro name component")
                 bump(ps, TRIVIA_FLAG, error="Unexpected `.` after macro name")
                 # Recover by treating the `@` as if it had been on the wole thing
                 reset_node!(ps, macro_atname_range[2], kind=K"TOMBSTONE")
-                is_macrocall_on_entry = true
+                processing_macro_name = true
             else
                 bump(ps, TRIVIA_FLAG)
             end
             k = peek(ps)
             if k == K"("
                 if is_macrocall
-                    is_macrocall_on_entry && emit(ps, mark, K"macro_name")
+                    processing_macro_name && emit(ps, mark, K"macro_name")
                     # Recover by pretending we do have the syntax
-                    is_macrocall_on_entry = false
+                    processing_macro_name = false
                     # @M.(x)  ==> (macrocall (dotcall (macro_name M) (error-t) x))
                     bump_invisible(ps, K"error", TRIVIA_FLAG)
                     emit_diagnostic(ps, mark,
@@ -1731,7 +1734,8 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
             bump(ps, remap_kind=K"Identifier")
             emit(ps, mark, K"call", POSTFIX_OP_FLAG)
         elseif k == K"{"
-            is_macrocall_on_entry && emit(ps, mark, K"macro_name")
+            processing_macro_name && emit(ps, mark, K"macro_name")
+            processing_macro_name = false
             # Type parameter curlies and macro calls
             m = position(ps)
             # S {a} ==> (curly S (error-t) a)
