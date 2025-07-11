@@ -129,11 +129,11 @@ end # testset
 
             K"NewlineWs",K"Comment",
 
-            K"NewlineWs",K"Integer",K"%",K"Integer",
+            K"NewlineWs",K"Integer",K"Operator",K"Integer",
 
-            K"NewlineWs",K"Identifier",K"'",K"/",K"Identifier",K"'",
+            K"NewlineWs",K"Identifier",K"'",K"Operator",K"Identifier",K"'",
 
-            K"NewlineWs",K"Identifier",K".",K"'",K"\\",K"Identifier",K".",K"'",
+            K"NewlineWs",K"Identifier",K".",K"'",K"Operator",K"Identifier",K".",K"'",
 
             K"NewlineWs",K"`",K"CmdString",K"`",
 
@@ -175,18 +175,28 @@ end
 end
 
 @testset "test added operators" begin
-    @test tok("1+=2",  2).kind == K"op="
-    @test tok("1-=2",  2).kind == K"op="
-    @test tok("1*=2",  2).kind == K"op="
-    @test tok("1^=2",  2).kind == K"op="
-    @test tok("1÷=2",  2).kind == K"op="
-    @test tok("1\\=2", 2).kind == K"op="
-    @test tok("1\$=2", 2).kind == K"op="
-    @test tok("1⊻=2",  2).kind == K"op="
+    # Compound assignments now emit separate operator and = tokens
+    # Operators emit as K"Operator" when followed by =
+    @test tok("1+=2",  2).kind == K"Operator" # + before =
+    @test tok("1+=2",  3).kind == K"="
+    @test tok("1-=2",  2).kind == K"Operator" # - before =
+    @test tok("1-=2",  3).kind == K"="
+    @test tok("1*=2",  2).kind == K"Operator" # * before =
+    @test tok("1*=2",  3).kind == K"="
+    @test tok("1^=2",  2).kind == K"Operator" # ^ before =
+    @test tok("1^=2",  3).kind == K"="
+    @test tok("1÷=2",  2).kind == K"Operator" # ÷ before =
+    @test tok("1÷=2",  3).kind == K"="
+    @test tok("1\\=2", 2).kind == K"Operator" # \ before =
+    @test tok("1\\=2", 3).kind == K"="
+    @test tok("1\$=2", 2).kind == K"Operator" # $ before =
+    @test tok("1\$=2", 3).kind == K"="
+    @test tok("1⊻=2",  2).kind == K"Operator" # ⊻ before =
+    @test tok("1⊻=2",  3).kind == K"="
     @test tok("1:=2",  2).kind == K":="
     @test tok("1-->2", 2).kind == K"-->"
-    @test tok("1<--2", 2).kind == K"<--"
-    @test tok("1<-->2", 2).kind == K"<-->"
+    @test tok("1<--2", 2).kind == K"Operator"
+    @test tok("1<-->2", 2).kind == K"Operator"
     @test tok("1>:2",  2).kind == K">:"
 end
 
@@ -584,9 +594,9 @@ end
 end
 
 @testset "modifying function names (!) followed by operator" begin
-    @test toks("a!=b") == ["a"=>K"Identifier", "!="=>K"!=", "b"=>K"Identifier"]
-    @test toks("a!!=b") == ["a!"=>K"Identifier", "!="=>K"!=", "b"=>K"Identifier"]
-    @test toks("!=b") == ["!="=>K"!=", "b"=>K"Identifier"]
+    @test toks("a!=b") == ["a"=>K"Identifier", "!="=>K"Operator", "b"=>K"Identifier"]
+    @test toks("a!!=b") == ["a!"=>K"Identifier", "!="=>K"Operator", "b"=>K"Identifier"]
+    @test toks("!=b") == ["!="=>K"Operator", "b"=>K"Identifier"]
 end
 
 @testset "integer literals" begin
@@ -725,11 +735,11 @@ end
                                  "f"=>K"Identifier", "("=>K"(", "a"=>K"Identifier", ")"=>K")"]
     @test toks("1234.0 .f(a)") == ["1234.0"=>K"Float", " "=>K"Whitespace", "."=>K".",
                                    "f"=>K"Identifier", "("=>K"(", "a"=>K"Identifier", ")"=>K")"]
-    @test toks("1f0./1") == ["1f0"=>K"Float32", "."=>K".", "/"=>K"/", "1"=>K"Integer"]
+    @test toks("1f0./1") == ["1f0"=>K"Float32", "."=>K".", "/"=>K"Operator", "1"=>K"Integer"]
 
     # Dotted operators after numeric constants are ok
-    @test toks("1e1.⫪")  == ["1e1"=>K"Float", "."=>K".", "⫪"=>K"⫪"]
-    @test toks("1.1.⫪")  == ["1.1"=>K"Float", "."=>K".", "⫪"=>K"⫪"]
+    @test toks("1e1.⫪")  == ["1e1"=>K"Float", "."=>K".", "⫪"=>K"Operator"]
+    @test toks("1.1.⫪")  == ["1.1"=>K"Float", "."=>K".", "⫪"=>K"Operator"]
     @test toks("1e1.−")  == ["1e1"=>K"Float", "."=>K".", "−"=>K"-"]
     @test toks("1.1.−")  == ["1.1"=>K"Float", "."=>K".", "−"=>K"-"]
     # Non-dottable operators are not ok
@@ -739,8 +749,8 @@ end
     # Ambiguous dotted operators
     @test toks("1.+") == ["1."=>K"ErrorAmbiguousNumericConstant", "+"=>K"+"]
     @test toks("1.+ ") == ["1."=>K"ErrorAmbiguousNumericConstant", "+"=>K"+", " "=>K"Whitespace"]
-    @test toks("1.⤋")  == ["1."=>K"ErrorAmbiguousNumericConstant", "⤋"=>K"⤋"]
-    @test toks("1.⫪")  == ["1."=>K"ErrorAmbiguousNumericConstant", "⫪"=>K"⫪"]
+    @test toks("1.⤋")  == ["1."=>K"ErrorAmbiguousNumericConstant", "⤋"=>K"Operator"]
+    @test toks("1.⫪")  == ["1."=>K"ErrorAmbiguousNumericConstant", "⫪"=>K"Operator"]
     # non-dottable ops are the exception
     @test toks("1.:")  == ["1."=>K"Float", ":"=>K":"]
     @test toks("1.\$") == ["1."=>K"Float", "\$"=>K"$"]
@@ -793,9 +803,24 @@ end
     @test length(collect(tokenize(io))) == 4
 end
 
+function _nondot_symbolic_operator_kinds()
+    op_range = reinterpret(UInt16, K"BEGIN_OPS"):reinterpret(UInt16, K"END_OPS")
+    setdiff(reinterpret.(Kind, op_range), [
+        K"ErrorInvalidOperator"
+        K"Error**"
+        K"."
+        K".."
+        K"where"
+        K"isa"
+        K"in"
+        K".'"
+        K"op="
+    ])
+end
+
 @testset "dotted and suffixed operators" begin
 
-for opkind in Tokenize._nondot_symbolic_operator_kinds()
+for opkind in _nondot_symbolic_operator_kinds()
     op = string(opkind)
     strs = [
         1 => [ # unary
@@ -853,19 +878,21 @@ end
 
 @testset "Normalization of Unicode symbols" begin
     # https://github.com/JuliaLang/julia/pull/25157
-    @test tok("\u00b7").kind == K"⋅"
-    @test tok("\u0387").kind == K"⋅"
-    @test toks(".\u00b7") == ["."=>K".", "\u00b7"=>K"⋅"]
-    @test toks(".\u0387") == ["."=>K".", "\u0387"=>K"⋅"]
+    @test tok("\u00b7").kind == K"Operator"
+    @test tok("\u0387").kind == K"Operator"
+    @test toks(".\u00b7") == ["."=>K".", "\u00b7"=>K"Operator"]
+    @test toks(".\u0387") == ["."=>K".", "\u0387"=>K"Operator"]
 
     # https://github.com/JuliaLang/julia/pull/40948
     @test tok("−").kind == K"-"
-    @test tok("−=").kind == K"op="
+    # −= now emits separate tokens
+    @test tok("−=").kind == K"Operator" # − before =
+    @test tok("−=", 2).kind == K"="
     @test toks(".−") == ["."=>K".", "−"=>K"-"]
 end
 
 @testset "perp" begin
-    @test tok("1 ⟂ 2", 3).kind==K"⟂"
+    @test tok("1 ⟂ 2", 3).kind==K"Operator"
 end
 
 @testset "outer" begin
@@ -894,7 +921,7 @@ end
 
 @testset "circ arrow right op" begin
     s = "↻"
-    @test collect(tokenize(s))[1].kind == K"↻"
+    @test collect(tokenize(s))[1].kind == K"Operator"
 end
 
 @testset "invalid float" begin
@@ -918,8 +945,8 @@ end
         raw"<|"
         raw"|>"
         raw": .. … ⁝ ⋮ ⋱ ⋰ ⋯"
-        raw"$ + - ¦ | ⊕ ⊖ ⊞ ⊟ ++ ∪ ∨ ⊔ ± ∓ ∔ ∸ ≏ ⊎ ⊻ ⊽ ⋎ ⋓ ⧺ ⧻ ⨈ ⨢ ⨣ ⨤ ⨥ ⨦ ⨧ ⨨ ⨩ ⨪ ⨫ ⨬ ⨭ ⨮ ⨹ ⨺ ⩁ ⩂ ⩅ ⩊ ⩌ ⩏ ⩐ ⩒ ⩔ ⩖ ⩗ ⩛ ⩝ ⩡ ⩢ ⩣"
-        raw"* / ⌿ ÷ % & ⋅ ∘ × \ ∩ ∧ ⊗ ⊘ ⊙ ⊚ ⊛ ⊠ ⊡ ⊓ ∗ ∙ ∤ ⅋ ≀ ⊼ ⋄ ⋆ ⋇ ⋉ ⋊ ⋋ ⋌ ⋏ ⋒ ⟑ ⦸ ⦼ ⦾ ⦿ ⧶ ⧷ ⨇ ⨰ ⨱ ⨲ ⨳ ⨴ ⨵ ⨶ ⨷ ⨸ ⨻ ⨼ ⨽ ⩀ ⩃ ⩄ ⩋ ⩍ ⩎ ⩑ ⩓ ⩕ ⩘ ⩚ ⩜ ⩞ ⩟ ⩠ ⫛ ⊍ ▷ ⨝ ⟕ ⟖ ⟗"
+        raw"$ + - | ⊕ ⊖ ⊞ ⊟ ++ ∪ ∨ ⊔ ± ∓ ∔ ∸ ≏ ⊎ ⊻ ⊽ ⋎ ⋓ ⧺ ⧻ ⨈ ⨢ ⨣ ⨤ ⨥ ⨦ ⨧ ⨨ ⨩ ⨪ ⨫ ⨬ ⨭ ⨮ ⨹ ⨺ ⩁ ⩂ ⩅ ⩊ ⩌ ⩏ ⩐ ⩒ ⩔ ⩖ ⩗ ⩛ ⩝ ⩡ ⩢ ⩣"
+        raw"* / ÷ % & ⋅ ∘ × \ ∩ ∧ ⊗ ⊘ ⊙ ⊚ ⊛ ⊠ ⊡ ⊓ ∗ ∙ ∤ ⅋ ≀ ⊼ ⋄ ⋆ ⋇ ⋉ ⋊ ⋋ ⋌ ⋏ ⋒ ⟑ ⦸ ⦼ ⦾ ⦿ ⧶ ⧷ ⨇ ⨰ ⨱ ⨲ ⨳ ⨴ ⨵ ⨶ ⨷ ⨸ ⨻ ⨼ ⨽ ⩀ ⩃ ⩄ ⩋ ⩍ ⩎ ⩑ ⩓ ⩕ ⩘ ⩚ ⩜ ⩞ ⩟ ⩠ ⫛ ⊍ ▷ ⨝ ⟕ ⟖ ⟗"
         raw"//"
         raw"<< >> >>>"
         raw"^ ↑ ↓ ⇵ ⟰ ⟱ ⤈ ⤉ ⤊ ⤋ ⤒ ⤓ ⥉ ⥌ ⥍ ⥏ ⥑ ⥔ ⥕ ⥘ ⥙ ⥜ ⥝ ⥠ ⥡ ⥣ ⥥ ⥮ ⥯ ￪ ￬"
@@ -927,7 +954,7 @@ end
         raw"."
     ]
     if VERSION >= v"1.6.0"
-        push!(ops, raw"<-- <-->")
+        push!(ops, raw"<-- <--> ¦ ⌿")
     end
     if VERSION >= v"1.7.0"
         append!(ops, [

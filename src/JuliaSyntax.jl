@@ -41,7 +41,11 @@ export SourceFile
 @_public source_line_range
 
 # Expression predicates, kinds and flags
-export @K_str, kind
+export @K_str, kind, PrecedenceLevel, PREC_NONE, PREC_ASSIGNMENT,
+    PREC_PAIRARROW, PREC_CONDITIONAL, PREC_ARROW, PREC_LAZYOR, PREC_LAZYAND,
+    PREC_COMPARISON, PREC_PIPE_LT, PREC_PIPE_GT, PREC_COLON, PREC_PLUS,
+    PREC_BITSHIFT, PREC_TIMES, PREC_RATIONAL, PREC_POWER, PREC_DECL,
+    PREC_WHERE, PREC_DOT, PREC_QUOTE, PREC_UNICODE_OPS, PREC_COMPOUND_ASSIGN, generic_operators_by_level
 @_public Kind
 
 @_public flags,
@@ -53,7 +57,6 @@ export @K_str, kind
     is_prefix_op_call,
     is_postfix_op_call,
     is_dotted,
-    is_suffixed,
     is_decorated,
     numeric_flags,
     has_flags,
