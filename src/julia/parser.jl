@@ -2197,7 +2197,15 @@ function parse_function_signature(ps::ParseState, is_function::Bool)
             is_empty_tuple = peek(ps, skip_newlines=true) == K")"
             opts = parse_brackets(ps, K")") do had_commas, had_splat, num_semis, num_subexprs
                 _parsed_call = was_eventually_call(ps)
-                _needs_parse_call = peek(ps, 2) ∈ KSet"( ."
+                # Check if we should skip newlines - only for specific cases
+                # where we have a single type annotation like (::T)
+                _skip_newlines = !had_commas && num_subexprs == 1 && 
+                                !had_splat && num_semis == 0
+                _needs_parse_call = if _skip_newlines
+                    peek(ps, 2, skip_newlines=true) ∈ KSet"( ."
+                else
+                    peek(ps, 2) ∈ KSet"( ."
+                end
                 _is_anon_func = (!_needs_parse_call && !_parsed_call) || had_commas
                 return (needs_parameters = _is_anon_func,
                         is_anon_func     = _is_anon_func,
