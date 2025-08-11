@@ -455,9 +455,9 @@ function lower_identifier_name(name::AbstractString, k::Kind)
     # Replicate eager lowering done by the flisp parser
     if k == K"macro_name"
         name == "." ? "@__dot__" : "@$name"
-    elseif k == K"StringMacroName"
+    elseif k == K"MacroNameStr"
         "@$(name)_str"
-    elseif k == K"CmdMacroName"
+    elseif k == K"MacroNameCmd"
         "@$(name)_cmd"
     else
         name
