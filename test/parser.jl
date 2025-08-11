@@ -1206,6 +1206,7 @@ end
     @test parse_to_sexpr_str(JuliaSyntax.parse_eq, "a \u00B7 b") == "(call-i a \u22C5 b)"
     @test parse_to_sexpr_str(JuliaSyntax.parse_eq, "a \u0387 b") == "(call-i a \u22C5 b)"
     # − ('\u2212') normalizes to - ('\u002d')
+    @test parse_to_sexpr_str(JuliaSyntax.parse_expr, "a \u2212 b")  == "(call-i a - b)"
     @test parse_to_sexpr_str(JuliaSyntax.parse_eq, "a \u2212= b") == "(op= a - b)"
     @test parse_to_sexpr_str(JuliaSyntax.parse_eq, "a .\u2212= b") == "(.op= a - b)"
 end
