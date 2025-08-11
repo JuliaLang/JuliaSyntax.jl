@@ -1170,8 +1170,8 @@ parsestmt_with_kind_tests = [
     ":+="    => "(quote-: +=::op=)"
     ":.+="   => "(quote-: (. +=::op=))"
     # str/cmd macro name kinds
-    "x\"str\""   => """(macrocall x::MacroNameStr (string-r "str"::String))"""
-    "x`str`"     => """(macrocall x::MacroNameCmd (cmdstring-r "str"::CmdString))"""
+    "x\"str\""   => """(macrocall x::StrMacroName (string-r "str"::String))"""
+    "x`str`"     => """(macrocall x::CmdMacroName (cmdstring-r "str"::CmdString))"""
 ]
 
 @testset "parser `Kind` remapping" begin

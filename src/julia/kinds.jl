@@ -196,8 +196,8 @@ register_kinds!(JuliaSyntax, 0, [
         "Placeholder" # Used for empty catch variables, and all-underscore identifiers in lowering
         # String and command macro names are modeled as a special kind of
         # identifier as they need to be mangled before lookup.
-        "MacroNameStr"
-        "MacroNameCmd"
+        "StrMacroName"
+        "CmdMacroName"
     "END_IDENTIFIERS"
 
     "BEGIN_KEYWORDS"
@@ -1108,8 +1108,8 @@ const _nonunique_kind_names = Set([
     K"Char"
     K"CmdString"
 
-    K"MacroNameStr"
-    K"MacroNameCmd"
+    K"StrMacroName"
+    K"CmdMacroName"
 ])
 
 """

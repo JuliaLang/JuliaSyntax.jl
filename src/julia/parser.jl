@@ -1797,7 +1797,7 @@ function parse_call_chain(ps::ParseState, mark, is_macrocall=false)
             #
             # Use a special token kind for string and cmd macro names so the
             # names can be expanded later as necessary.
-            name_kind = is_string_delim(k) ? K"MacroNameStr" : K"MacroNameCmd"
+            name_kind = is_string_delim(k) ? K"StrMacroName" : K"CmdMacroName"
             reset_node!(ps, last_identifier_pos, kind=name_kind)
             parse_string(ps, true)
             t = peek_token(ps)
