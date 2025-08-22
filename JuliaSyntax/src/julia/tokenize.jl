@@ -832,14 +832,10 @@ function lex_less(l::Lexer)
         readchar(l); readchar(l)
         if accept(l, '-')
             return emit(l, K"ErrorInvalidOperator")
+        elseif accept(l, '>')
+            return emit(l, K"<-->")
         else
-            if accept(l, '>')
-                return emit(l, K"<-->")
-            elseif accept(l, '-')
-                return emit(l, K"ErrorInvalidOperator")
-            else
-                return emit(l, K"<--")
-            end
+            return emit(l, K"<--")
         end
     else
         return emit(l, K"<")
