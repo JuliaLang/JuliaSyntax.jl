@@ -102,6 +102,10 @@ function _register_kinds!(kind_modules, int_to_kindstr, kind_str_to_int, mod, mo
             error("Kind module ID $module_id already claimed by module $m")
         end
     end
+    _register_kinds_names!(int_to_kindstr, kind_str_to_int, module_id, names)
+end
+
+function _register_kinds_names!(int_to_kindstr, kind_str_to_int, module_id, names)
     # Process names to conflate category BEGIN/END markers with the first/last
     # in the category.
     i = 0
