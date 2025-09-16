@@ -917,7 +917,7 @@ function sourcetext(stream::ParseStream; steal_textbuf=false)
     # unstable. (Also codeunit(root) == UInt8 doesn't imply UTF-8 encoding?)
     # if root isa AbstractString && codeunit(root) == UInt8
     #     return root
-    str = if root isa String || root isa SubString
+    str = if root isa String || root isa SubString{String}
         root
     elseif steal_textbuf
         String(stream.textbuf)
