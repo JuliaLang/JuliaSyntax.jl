@@ -244,8 +244,8 @@ end
         tempdirname = mktempdir()
         cd(tempdirname) do
             rm(tempdirname)
-            # Test _file_url doesn't fail with nonexistant directories
-            @test isnothing(JuliaSyntax._file_url(joinpath("__nonexistant__", "test.jl")))
+            # Test _file_url doesn't fail with nonexistent directories
+            @test isnothing(JuliaSyntax._file_url(joinpath("__nonexistent__", "test.jl")))
         end
     end
 end
