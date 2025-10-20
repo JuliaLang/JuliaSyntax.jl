@@ -2219,7 +2219,7 @@ function parse_function_signature(ps::ParseState, is_function::Bool)
                 # function (f(x),) end  ==>  (function (tuple-p (call f x)) (block))
                 ambiguous_parens = opts.maybe_grouping_parens &&
                                    peek_behind(ps).kind in KSet"macrocall $"
-                emit(ps, mark, K"tuple", PARENS_FLAG|opts.delim_flags)
+                emit(ps, mark, K"tuple", PARENS_FLAG|(opts.delim_flags::RawFlags))
                 if ambiguous_parens
                     # Got something like `(@f(x))`. Is it anon `(@f(x),)` or named sig `@f(x)` ??
                     emit(ps, mark, K"error", error="Ambiguous signature. Add a trailing comma if this is a 1-argument anonymous function; remove parentheses if this is a macro call acting as function signature.")
