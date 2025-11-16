@@ -288,8 +288,6 @@ register_kinds!(JuliaSyntax, 0, [
     "ErrorInvalidOperator"
     "Error**"
 
-    "..."
-
     # Level 1
     "BEGIN_ASSIGNMENTS"
         "BEGIN_SYNTACTIC_ASSIGNMENTS"
@@ -784,7 +782,6 @@ register_kinds!(JuliaSyntax, 0, [
     # Level 8
     "BEGIN_COLON"
         ":"
-        ".."
         "…"
         "⁝"
         "⋮"
@@ -1043,6 +1040,10 @@ register_kinds!(JuliaSyntax, 0, [
         "typed_ncat"
         "row"
         "nrow"
+        # splat/slurp
+        "..."
+        # ../... as a identifier
+        "DotsIdentifier"
         # Comprehensions
         "generator"
         "filter"
