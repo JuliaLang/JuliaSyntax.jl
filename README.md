@@ -1,9 +1,19 @@
 # JuliaSyntax
 
+## Development of JuliaSyntax has moved to JuliaLang/julia
+
+JuliaSyntax was moved to [the JuliaSyntax
+subdirectory](https://github.com/JuliaLang/julia/tree/master/JuliaSyntax) of
+the main Julia repository as of Nov 15 2025 and all future development should
+continue there. See [JuliaLang/julia#59870](https://github.com/JuliaLang/julia/pull/59870)
+for detail.
+
+## Old README
+
 [![Build Status](https://github.com/c42f/JuliaSyntax.jl/workflows/CI/badge.svg)](https://github.com/c42f/JuliaSyntax.jl/actions)
 [![codecov.io](https://codecov.io/github/JuliaLang/JuliaSyntax.jl/coverage.svg?branch=main)](https://codecov.io/github/JuliaLang/JuliaSyntax.jl?branch=main)
 
-A Julia compiler frontend, written in Julia.
+The Julia compiler frontend, written in Julia.
 
 Read the [documentation](https://JuliaLang.github.io/JuliaSyntax.jl/dev) for
 more information.
