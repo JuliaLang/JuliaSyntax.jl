@@ -434,8 +434,9 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
     elseif k == K"function"
         if length(args) > 1
             if has_flags(head, SHORT_FORM_FUNCTION_FLAG)
+                a1 = args[1]
                 a2 = args[2]
-                if !@isexpr(a2, :block)
+                if !@isexpr(a2, :block) && !@isexpr(a1, Symbol("'"))
                     args[2] = Expr(:block, a2)
                 end
                 headsym = :(=)
@@ -451,7 +452,9 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
                     end
                 end
             end
-            pushfirst!((args[2]::Expr).args, loc)
+            arg2 = args[2]
+            # Only push if this is an Expr - could be an ErrorVal
+            isa(arg2, Expr) && pushfirst!(arg2.args, loc)
         end
     elseif k == K"macro"
         if length(args) > 1
