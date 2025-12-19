@@ -168,7 +168,7 @@ function core_parser_hook(code, filename::String, lineno::Int, offset::Int, opti
                 # If we're at the end of stream after skipping whitespace, just
                 # return `nothing` to indicate this rather than attempting to
                 # parse a statement or atom and failing.
-                return Core.svec(nothing, last_byte(stream))
+                return Core.svec(nothing, Int(last_byte(stream)))
             end
         end
         parse!(stream; rule=options)
@@ -239,7 +239,7 @@ function core_parser_hook(code, filename::String, lineno::Int, offset::Int, opti
         # Note the next byte in 1-based indexing is `last_byte(stream) + 1` but
         # the Core hook must return an offset (ie, it's 0-based) so the factors
         # of one cancel here.
-        last_offset = last_byte(stream)
+        last_offset = Int(last_byte(stream))
 
         if !isnothing(_debug_log[])
             println(_debug_log[], """
