@@ -1188,6 +1188,14 @@ function parse_juxtapose(ps::ParseState)
     end
 end
 
+@kwdef mutable struct ParseUnaryBracketOpts
+    delim_flags::RawFlags = 0
+    needs_parameters::Bool
+    is_paren_call::Bool
+    is_block::Bool
+end
+
+
 # Parse numeric literal prefixes, calls to unary operators and prefix
 # calls involving arbitrary operators with bracketed arglists (as opposed to
 # infix notation)
@@ -1282,9 +1290,9 @@ function parse_unary(ps::ParseState)
                             (initial_semi && num_subexprs > 0)    ||
                             (initial_semi && num_semis == 1)      ||
                             (num_semis == 0 && num_subexprs == 0)
-            return (needs_parameters=is_paren_call,
-                    is_paren_call=is_paren_call,
-                    is_block=!is_paren_call && num_semis > 0)
+            return ParseUnaryBracketOpts(; needs_parameters=is_paren_call,
+                                         is_paren_call=is_paren_call,
+                                         is_block=!is_paren_call && num_semis > 0)
         end
 
         # The precedence between unary + and any following infix ^ depends on
@@ -2118,6 +2126,15 @@ function parse_global_local_const_vars(ps)
     return kind(t) == K"=" && !is_dotted(t)
 end
 
+@kwdef mutable struct ParseFunctionSigBracketsOpts
+    delim_flags::RawFlags = 0
+    needs_parameters::Bool
+    is_anon_func::Bool
+    parsed_call::Bool
+    needs_parse_call::Bool
+    maybe_grouping_parens::Bool
+end
+
 # Parse function and macro definitions
 function parse_function_signature(ps::ParseState, is_function::Bool)
     is_anon_func = false
@@ -2155,11 +2172,11 @@ function parse_function_signature(ps::ParseState, is_function::Bool)
                 _parsed_call = was_eventually_call(ps)
                 _needs_parse_call = peek(ps, 2) ∈ KSet"( ."
                 _is_anon_func = (!_needs_parse_call && !_parsed_call) || had_commas
-                return (needs_parameters = _is_anon_func,
-                        is_anon_func     = _is_anon_func,
-                        parsed_call      = _parsed_call,
-                        needs_parse_call = _needs_parse_call,
-                        maybe_grouping_parens = !had_commas && !had_splat && num_semis == 0 && num_subexprs == 1)
+                return ParseFunctionSigBracketsOpts(; needs_parameters = _is_anon_func,
+                                                    is_anon_func     = _is_anon_func,
+                                                    parsed_call      = _parsed_call,
+                                                    needs_parse_call = _needs_parse_call,
+                                                    maybe_grouping_parens = !had_commas && !had_splat && num_semis == 0 && num_subexprs == 1)
             end
             is_anon_func = opts.is_anon_func
             parsed_call = opts.parsed_call
@@ -2727,6 +2744,11 @@ function parse_space_separated_exprs(ps::ParseState)
     return n_sep
 end
 
+@kwdef mutable struct ParseCallArglistBracketsOpts
+    delim_flags::RawFlags = 0
+    needs_parameters::Bool
+end
+
 # like parse-arglist, but with `for` parsed as a generator
 #
 # flisp: parse-call-arglist
@@ -2734,8 +2756,14 @@ function parse_call_arglist(ps::ParseState, closer)
     ps = ParseState(ps, for_generator=true)
 
     parse_brackets(ps, closer, false) do _, _, _, _
-        return (needs_parameters=true,)
+        return ParseCallArglistBracketsOpts(; needs_parameters=true)
     end
+end
+
+@kwdef mutable struct ParseVectBracketOpts
+    delim_flags::RawFlags = 0
+    needs_parameters::Bool
+    num_subexprs::Int
 end
 
 # Parse the suffix of comma-separated array expressions such as
@@ -2750,8 +2778,8 @@ function parse_vect(ps::ParseState, closer, prefix_trailing_comma)
     # [x=1, y=2]    ==>  (vect (= x 1) (= y 2))
     # [x=1, ; y=2]  ==>  (vect (= x 1) (parameters (= y 2)))
     opts = parse_brackets(ps, closer) do _, _, _, num_subexprs
-        return (needs_parameters=true,
-                num_subexprs=num_subexprs)
+        return ParseVectBracketOpts(; needs_parameters=true,
+                                    num_subexprs=num_subexprs)
     end
     delim_flags = opts.delim_flags
     if opts.num_subexprs == 0 && prefix_trailing_comma
@@ -3062,6 +3090,13 @@ function check_ncat_compat(ps, mark, k)
     end
 end
 
+@kwdef mutable struct ParseParenBracketsOpts
+    delim_flags::RawFlags = 0
+    needs_parameters::Bool
+    is_tuple::Bool
+    is_block::Bool
+end
+
 # Parse un-prefixed parenthesized syntax. This is hard because parentheses are
 # *very* overloaded!
 #
@@ -3101,9 +3136,9 @@ function parse_paren(ps::ParseState, check_identifiers=true, has_unary_prefix=fa
             is_tuple = had_commas || (had_splat && num_semis >= 1) ||
                        (initial_semi && (num_semis == 1 || num_subexprs > 0)) ||
                        (peek(ps, 2) == K"->" && (peek_behind(ps).kind != K"where" && !has_unary_prefix))
-            return (needs_parameters=is_tuple,
-                    is_tuple=is_tuple,
-                    is_block=num_semis > 0)
+            return ParseParenBracketsOpts(; needs_parameters=is_tuple,
+                                          is_tuple=is_tuple,
+                                          is_block=num_semis > 0)
         end
         if opts.is_tuple
             # Tuple syntax with commas
@@ -3231,10 +3266,17 @@ function parse_brackets(after_parse::F,
     end
     release_positions(ps.stream, params_positions)
     bump_closing_token(ps, closing_kind, " or `,`")
-    return (; opts..., delim_flags=trailing_comma ? TRAILING_COMMA_FLAG : EMPTY_FLAGS)
+    opts.delim_flags = trailing_comma ? TRAILING_COMMA_FLAG : EMPTY_FLAGS
+    return opts
 end
 
 _is_indentation(b::UInt8) = (b == u8" " || b == u8"\t")
+
+@kwdef mutable struct ParseStringBracketsOpts
+    delim_flags::RawFlags = 0
+    needs_parameters::Bool
+    simple_interp::Bool
+end
 
 # Parse a string, embedded interpolations and deindent triple quoted strings
 # by marking indentation characters as whitespace trivia.
@@ -3280,8 +3322,8 @@ function parse_string(ps::ParseState, raw::Bool)
                 m = position(ps)
                 bump(ps, TRIVIA_FLAG)
                 opts = parse_brackets(ps, K")") do had_commas, had_splat, num_semis, num_subexprs
-                    return (needs_parameters=false,
-                            simple_interp=!had_commas && num_semis == 0 && num_subexprs == 1)
+                    return ParseStringBracketsOpts(; needs_parameters=false,
+                                                   simple_interp=!had_commas && num_semis == 0 && num_subexprs == 1)
                 end
                 if !opts.simple_interp || peek_behind(ps, skip_parens=false).kind == K"generator"
                     # "$(x,y)" ==> (string (parens (error x y)))
