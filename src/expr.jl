@@ -453,8 +453,8 @@ function _internal_node_to_Expr(source, srcrange, head, childranges, childheads,
                 end
             end
             arg2 = args[2]
-            # Only push if this is an Expr - could be an ErrorVal
-            isa(arg2, Expr) && pushfirst!(arg2.args, loc)
+            # Add location if not ErrorVal or unwrapped block
+            @isexpr(arg2, :block) && pushfirst!(arg2.args, loc)
         end
     elseif k == K"macro"
         if length(args) > 1
