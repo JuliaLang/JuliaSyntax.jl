@@ -671,4 +671,4 @@ function to_expr(node)
     return fixup_Expr_child(wrapper_head, node_to_expr(node, source, txtbuf, UInt32(txtbuf_offset)), false)
 end
 
-Base.Expr(node::SyntaxNode) = to_expr(node)
+Base.Expr(node::SyntaxNode) = to_expr(node)::Expr
