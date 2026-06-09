@@ -686,19 +686,20 @@ function parse_cond(ps::ParseState)
     end
     parse_eq_star(ParseState(ps, range_colon_enabled=false))
     t = peek_token(ps)
-    if !preceding_whitespace(t)
+    had_colon = kind(t) == K":"
+    if had_colon && !preceding_whitespace(t)
         # a ? b: c  ==>  (? a b (error-t) c)
         bump_invisible(ps, K"error", TRIVIA_FLAG,
                        error="space required before `:` in `?` expression")
     end
-    if kind(t) == K":"
+    if had_colon
         bump(ps, TRIVIA_FLAG)
     else
         # a ? b c  ==>  (? a b (error-t) c)
         bump_invisible(ps, K"error", TRIVIA_FLAG, error="`:` expected in `?` expression")
     end
     t = peek_token(ps; skip_newlines = true)
-    if !preceding_whitespace(t)
+    if had_colon && !preceding_whitespace(t)
         # a ? b :c  ==>  (? a b (error-t) c)
         bump_invisible(ps, K"error", TRIVIA_FLAG,
                        error="space required after `:` in `?` expression")
