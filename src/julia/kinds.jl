@@ -227,6 +227,7 @@ register_kinds!(JuliaSyntax, 0, [
         "return"
         "struct"
         "try"
+        "typegroup"
         "using"
         "while"
         "BEGIN_BLOCK_CONTINUATION_KEYWORDS"
@@ -295,7 +296,7 @@ register_kinds!(JuliaSyntax, 0, [
         "BEGIN_SYNTACTIC_ASSIGNMENTS"
         "="
         ".="
-        "op="  # Updating assignment operator ( $= %= &= *= += -= //= /= <<= >>= >>>= \= ^= |= ÷= ⊻= )
+        "op="  # Updating assignment operator ( $= %= &= *= += -= +%= -%= *%= //= /= <<= >>= >>>= \= ^= |= ÷= ⊻= )
         ".op="
         ":="
         "END_SYNTACTIC_ASSIGNMENTS"
@@ -797,7 +798,9 @@ register_kinds!(JuliaSyntax, 0, [
     "BEGIN_PLUS"
         "\$"
         "+"
+        "+%" # wrapping addition
         "-" # also used for "−"
+        "-%" # wrapping subtraction
         "++"
         "⊕"
         "⊖"
@@ -858,6 +861,7 @@ register_kinds!(JuliaSyntax, 0, [
     # Level 10
     "BEGIN_TIMES"
         "*"
+        "*%" # wrapping multiplication
         "/"
         "÷"
         "%"

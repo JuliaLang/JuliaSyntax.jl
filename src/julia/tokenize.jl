@@ -905,9 +905,25 @@ function lex_bar(l::Lexer)
     end
 end
 
+# `=` continues a compound assignment unless it starts `==` or `=>`.
+function compound_assign_follows(l::Lexer)
+    pc, ppc = dpeekchar(l)
+    return pc == '=' && ppc != '=' && ppc != '>'
+end
+
+function lex_wrapping_or_assign(l::Lexer, kind::Kind)
+    if compound_assign_follows(l)
+        accept(l, '=')
+        return emit(l, K"op=")
+    end
+    return emit(l, kind)
+end
+
 function lex_plus(l::Lexer)
     if accept(l, '+')
         return emit(l, K"++")
+    elseif accept(l, '%')
+        return lex_wrapping_or_assign(l, K"+%")
     elseif accept(l, '=')
         return emit(l, K"op=")
     end
@@ -923,6 +939,8 @@ function lex_minus(l::Lexer)
         end
     elseif l.last_token != K"." && accept(l, '>')
         return emit(l, K"->")
+    elseif accept(l, '%')
+        return lex_wrapping_or_assign(l, K"-%")
     elseif accept(l, '=')
         return emit(l, K"op=")
     end
@@ -932,6 +950,8 @@ end
 function lex_star(l::Lexer)
     if accept(l, '*')
         return emit(l, K"Error**") # "**" is an invalid operator use ^
+    elseif accept(l, '%')
+        return lex_wrapping_or_assign(l, K"*%")
     elseif accept(l, '=')
         return emit(l, K"op=")
     end
@@ -1291,6 +1311,7 @@ K"quote",
 K"return",
 K"struct",
 K"try",
+K"typegroup",
 K"using",
 K"while",
 K"in",

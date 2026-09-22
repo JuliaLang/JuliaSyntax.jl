@@ -317,6 +317,11 @@ function peek_dotted_op_token(ps, allow_whitespace=false)
 end
 
 function bump_dotted(ps, isdot, flags=EMPTY_FLAGS; emit_dot_node=false, remap_kind=K"None")
+    op_t = peek_token(ps, isdot ? 2 : 1)
+    if kind(op_t) in KSet"+% -% *%"
+        min_supported_version(v"1.14", ps, position(ps),
+            "wrapping arithmetic operators `+%`, `-%`, and `*%`")
+    end
     if isdot
         if emit_dot_node
             dotmark = position(ps)

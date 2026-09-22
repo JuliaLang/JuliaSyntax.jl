@@ -61,6 +61,9 @@ tests = [
         "a = b"       =>  "(= a b)"
         "a .= b"      =>  "(.= a b)"
         "a += b"      =>  "(op= a + b)"
+        with_version(v"1.14", "a +%= b" => "(op= a +% b)")
+        with_version(v"1.14", "a -%= b" => "(op= a -% b)")
+        with_version(v"1.14", "a *%= b" => "(op= a *% b)")
         "a .+= b"     =>  "(.op= a + b)"
         "a, b = c, d" =>  "(= (tuple a b) (tuple c d))"
         "x, = xs"     =>  "(= (tuple x) xs)"
@@ -83,6 +86,7 @@ tests = [
     ],
     JuliaSyntax.parse_cond => [
         "a ? b : c"   => "(? a b c)"
+        with_version(v"1.14", "x ? break : y" => "(? x (break) y)")
         "a ?\nb : c"  => "(? a b c)"
         "a ? b :\nc"  => "(? a b c)"
         "a ? b : c:d" =>   "(? a b (call-i c : d))"
@@ -156,6 +160,12 @@ tests = [
     JuliaSyntax.parse_expr => [
         "a - b - c"  => "(call-i (call-i a - b) - c)"
         "a + b + c"  => "(call-i a + b c)"
+        with_version(v"1.14", "a +% b" => "(call-i a +% b)")
+        with_version(v"1.14", "a +% b +% c" => "(call-i a +% b c)")
+        with_version(v"1.14", "a -% b" => "(call-i a -% b)")
+        with_version(v"1.14", "a -% b -% c" => "(call-i (call-i a -% b) -% c)")
+        with_version(v"1.14", "a *% b *% c" => "(call-i a *% b c)")
+        with_version(v"1.14", "a +%== b" => "(call-i a +% (call-pre (error ==) b))")
         "a + b .+ c" => "(dotcall-i (call-i a + b) + c)"
         # parse_with_chains:
         # The following is two elements of a hcat
@@ -269,6 +279,7 @@ tests = [
         "<:(a)"   =>  "(<:-pre (parens a))"
         # Normal unary calls
         "+x" => "(call-pre + x)"
+        with_version(v"1.14", "+%x" => "(call-pre +% x)")
         "√x" => "(call-pre √ x)"
         ".~x" => "(dotcall-pre ~ x)"
         # Things which are not quite negative literals
@@ -534,6 +545,7 @@ tests = [
         ((v=v"1.8",), "struct A const a end") => "(struct A (block (const a)))"
         ((v=v"1.7",), "struct A const a end") => "(struct A (block (error (const a))))"
         "struct A end"    =>  "(struct A (block))"
+        with_version(v"1.14", "typegroup struct A end end" => "(typegroup (block (struct A (block))))")
         "struct try end"  =>  "(struct (error try) (block))"
         # return
         "return\nx"   =>  "(return)"
@@ -543,6 +555,9 @@ tests = [
         # break/continue
         "break"    => "(break)"
         "continue" => "(continue)"
+        with_version(v"1.14", "break lab" => "(break lab)")
+        with_version(v"1.14", "break lab x" => "(break lab x)")
+        with_version(v"1.14", "continue lab" => "(continue lab)")
         # module/baremodule
         "module A end"      =>  "(module A (block))"
         "baremodule A end"  =>  "(module-bare A (block))"

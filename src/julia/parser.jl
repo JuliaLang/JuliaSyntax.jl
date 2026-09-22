@@ -202,6 +202,17 @@ function min_supported_version(min_ver, ps, mark, message)
     end
 end
 
+# `+%=`, `-%=`, and `*%=` are lexed as one `op=` token. The operator is the
+# two bytes before `=`.
+function _wrapping_update_assign(ps::ParseState, n::Int)
+    kind(peek_token(ps, n)) == K"op=" || return false
+    r = byte_range(peek_full_token(ps, n))
+    length(r) == 3 || return false
+    b = ps.stream.textbuf
+    return b[r[3]] == UInt8('=') && b[r[2]] == UInt8('%') &&
+           (b[r[1]] == UInt8('+') || b[r[1]] == UInt8('-') || b[r[1]] == UInt8('*'))
+end
+
 # flisp: disallow-space
 function bump_disallowed_space(ps)
     if preceding_whitespace(peek_token(ps))
@@ -239,13 +250,26 @@ function is_closer_or_newline(ps::ParseState, k)
     is_closing_token(ps,k) || k == K"NewlineWs"
 end
 
+# Closer for reserved words that are not closed by `end`, such as `break`.
+function is_nd_resword_closer(ps::ParseState, k)
+    return is_closer_or_newline(ps, k) ||
+           (k == K":" && !ps.range_colon_enabled)
+end
+
 function is_initial_reserved_word(ps::ParseState, k)
     k = kind(k)
     is_iresword = k in KSet"begin while if for try return break continue function
-                            macro quote let local global const do struct module
+                            macro quote let local global const do struct typegroup module
                             baremodule using import export"
     # `begin` means firstindex(a) inside a[...]
-    return is_iresword && !(k == K"begin" && ps.end_symbol)
+    if k == K"begin" && ps.end_symbol
+        return false
+    end
+    # `typegroup` is a keyword only from Julia 1.14.
+    if k == K"typegroup" && ps.stream.version < (1, 14)
+        return false
+    end
+    return is_iresword
 end
 
 function is_reserved_word(k)
@@ -264,6 +288,11 @@ function peek_initial_reserved_words(ps::ParseState)
         return (k == K"mutable"   && k2 == K"struct") ||
                (k == K"primitive" && k2 == K"type")   ||
                (k == K"abstract"  && k2 == K"type")
+    elseif k == K"typegroup" && ps.stream.version < (1, 14)
+        # Older Julia treats this word as a name. If a type definition follows,
+        # that juxtaposition is already illegal, so recover as typegroup.
+        k2 = peek(ps, 2, skip_newlines=false)
+        return k2 in KSet"struct mutable abstract primitive @ \" \"\"\""
     else
         return false
     end
@@ -271,7 +300,7 @@ end
 
 function is_block_form(k)
     kind(k) in KSet"block quote if for while let function macro
-                    abstract primitive struct try module"
+                    abstract primitive struct typegroup try module"
 end
 
 function is_syntactic_unary_op(k)
@@ -286,7 +315,7 @@ function is_unary_op(t, isdot)
     k = kind(t)
     !is_suffixed(t) && (
         (k in KSet"<: >:" && !isdot) ||
-        k in KSet"+ - ! ~ ¬ √ ∛ ∜ ⋆ ± ∓" # dotop allowed
+        k in KSet"+ +% - -% ! ~ ¬ √ ∛ ∜ ⋆ ± ∓" # dotop allowed
     )
 end
 
@@ -296,7 +325,7 @@ function is_both_unary_and_binary(t, isdot)
     # Preventing is_suffixed here makes this consistent with the flisp parser.
     # But is this by design or happenstance?
     !is_suffixed(t) && (
-        k in KSet"+ - ⋆ ± ∓" || (k in KSet"$ & ~" && !isdot)
+        k in KSet"+ +% - -% ⋆ ± ∓" || (k in KSet"$ & ~" && !isdot)
     )
 end
 
@@ -611,6 +640,12 @@ function parse_assignment_with_initial_ex(ps::ParseState, mark, down::T) where {
         if k == K"op="
             # x += y   ==>  (op= x + y)
             # x .+= y  ==>  (.op= x + y)
+            # x +%= y  ==>  (op= x +% y)
+            op_n = isdot ? 2 : 1
+            if _wrapping_update_assign(ps, op_n)
+                min_supported_version(v"1.14", ps, position(ps),
+                    "wrapping arithmetic operators `+%`, `-%`, and `*%`")
+            end
             bump_trivia(ps)
             isdot && bump(ps, TRIVIA_FLAG) # TODO: NOTATION_FLAG
             bump_split(ps,
@@ -977,14 +1012,14 @@ end
 #
 # flisp: parse-expr
 function parse_expr(ps::ParseState)
-    parse_with_chains(ps, parse_term, is_prec_plus, KSet"+ ++")
+    parse_with_chains(ps, parse_term, is_prec_plus, KSet"+ +% ++")
 end
 
 # a * b * c  ==>  (call-i a * b c)
 #
 # flisp: parse-term
 function parse_term(ps::ParseState)
-    parse_with_chains(ps, parse_rational, is_prec_times, KSet"*")
+    parse_with_chains(ps, parse_rational, is_prec_times, KSet"* *%")
 end
 
 # Parse left to right, combining any of `chain_ops` into one call
@@ -1856,12 +1891,20 @@ end
 #
 # flisp: parse-resword
 function parse_resword(ps::ParseState)
-    # In normal_context
     # begin f() where T = x end  ==>  (block (= (where (call f) T) x))
-    ps = normal_context(ps)
     bump_trivia(ps)
-    mark = position(ps)
     word = peek(ps)
+    if ps.stream.version >= (1, 14) && word in KSet"break continue return"
+        # Keep range_colon_enabled so `x ? break : y` stays a ternary.
+        ps = ParseState(ps;
+                        space_sensitive=false,
+                        where_enabled=true,
+                        for_generator=false,
+                        whitespace_newline=false)
+    else
+        ps = normal_context(ps)
+    end
+    mark = position(ps)
     if word in KSet"begin quote"
         # begin end         ==>  (block)
         # begin a ; b end   ==>  (block a b)
@@ -2033,6 +2076,13 @@ function parse_resword(ps::ParseState)
         bump_semicolon_trivia(ps)
         bump_closing_token(ps, K"end")
         emit(ps, mark, K"primitive")
+    elseif word == K"typegroup"
+        # typegroup struct A end end  ==>  (typegroup (block (struct A (block))))
+        bump(ps, TRIVIA_FLAG)
+        parse_block(ps, parse_docstring)
+        bump_closing_token(ps, K"end")
+        emit(ps, mark, K"typegroup")
+        min_supported_version(v"1.14", ps, mark, "typegroup")
     elseif word == K"try"
         parse_try(ps)
     elseif word == K"return"
@@ -2050,12 +2100,48 @@ function parse_resword(ps::ParseState)
     elseif word in KSet"break continue"
         # break     ==>  (break)
         # continue  ==>  (continue)
+        # break lab x  ==>  (break lab x)   since Julia 1.14
         bump(ps, TRIVIA_FLAG)
-        emit(ps, mark, word)
         k = peek(ps)
-        if !(k in KSet"NewlineWs ; ) : EndMarker" || (k == K"end" && !ps.end_symbol))
-            recover(is_closer_or_newline, ps, TRIVIA_FLAG,
-                    error="unexpected token after $(untokenize(word))")
+        if ps.stream.version >= (1, 14)
+            if is_nd_resword_closer(ps, k)
+                emit(ps, mark, word)
+            else
+                bump_trivia(ps)
+                emark = position(ps)
+                parse_unary_prefix(ps)
+                b = peek_behind(ps)
+                if b.orig_kind == K"Identifier" || is_contextual_keyword(b.orig_kind) ||
+                        b.kind == K"$" || b.kind == K"var"
+                    if word == K"break"
+                        t2 = peek_token(ps)
+                        if !is_nd_resword_closer(ps, kind(t2))
+                            if !preceding_whitespace(t2)
+                                bump_invisible(ps, K"error", TRIVIA_FLAG,
+                                               error="expected space after break label")
+                            end
+                            parse_eq(ps)
+                        end
+                    end
+                else
+                    emit(ps, emark, K"error", TRIVIA_FLAG,
+                         error="expected identifier for break label")
+                end
+                emit(ps, mark, word)
+                if !is_nd_resword_closer(ps, peek(ps))
+                    recover(is_nd_resword_closer, ps, TRIVIA_FLAG,
+                            error="unexpected token after $(untokenize(word))")
+                end
+            end
+        else
+            emit(ps, mark, word)
+            if !(k in KSet"NewlineWs ; ) : EndMarker" || (k == K"end" && !ps.end_symbol))
+                recover(is_closer_or_newline, ps, TRIVIA_FLAG,
+                        error="unexpected token after $(untokenize(word))")
+                if k == K"Identifier" || is_contextual_keyword(k) || k == K"$" || k == K"var"
+                    min_supported_version(v"1.14", ps, mark, "labeled `break` and `continue`")
+                end
+            end
         end
     elseif word in KSet"module baremodule"
         # module A end  ==> (module A (block))
