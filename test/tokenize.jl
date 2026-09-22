@@ -176,6 +176,12 @@ end
 
 @testset "test added operators" begin
     @test tok("1+=2",  2).kind == K"op="
+    @test tok("1+%=2", 2).kind == K"op="
+    @test tok("1-%=2", 2).kind == K"op="
+    @test tok("1*%=2", 2).kind == K"op="
+    @test tok("1+%",   2).kind == K"+%"
+    @test tok("1-%",   2).kind == K"-%"
+    @test tok("1*%",   2).kind == K"*%"
     @test tok("1-=2",  2).kind == K"op="
     @test tok("1*=2",  2).kind == K"op="
     @test tok("1^=2",  2).kind == K"op="
@@ -973,6 +979,7 @@ const all_kws = Set([
     "return",
     "struct",
     "try",
+    "typegroup",
     "using",
     "while",
     # Contextual keywords

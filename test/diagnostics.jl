@@ -33,6 +33,12 @@ end
     @test diagnostic("0x0.1") == Diagnostic(1, 5, :error, "hex float literal must contain `p` or `P`")
 end
 
+@testset "wrapping arithmetic" begin
+    msg = "wrapping arithmetic operators `+%`, `-%`, and `*%` not supported in Julia version 1.13 < 1.14"
+    @test diagnostic("a +% b"; version=v"1.13") == Diagnostic(2, 1, :error, msg)
+    @test diagnostic("a +% b"; only_first=true, version=v"1.14") === nothing
+end
+
 @testset "parser errors" begin
     @test diagnostic("+ #==# (a,b)") ==
         Diagnostic(2, 7, :error, "whitespace not allowed between prefix function call and argument list")
